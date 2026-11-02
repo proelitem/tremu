@@ -252,6 +252,8 @@ JA = {
     'Secouer': '振る',
     'Quitter Tremu': 'Tremu を終了',
     'Installe notre application Vita3K pour jouer aux jeux PS Vita': 'PS Vita のゲームを遊ぶには Vita3K アプリをインストールしてください',
+    'Écran tactile': 'タッチスクリーン',
+    'Tactile arrière': '背面タッチパッド',
     'PSP ad hoc : visible sur le Wi-Fi, ouvre le mode multijoueur du jeu': 'PSP アドホック：Wi-Fi 上に表示中です。ゲームのマルチプレイを開いてください',
     'Code de la partie : %s  (ouvre le mode multijoueur du jeu)': 'パーティーコード：%s（ゲームのマルチプレイを開いてください）',
     'Code de la partie : %s  (ouvre les ports TCP 27312 et 27313 sur ta box)': 'パーティーコード：%s（ルーターの TCP ポート 27312 と 27313 を開いてください）',

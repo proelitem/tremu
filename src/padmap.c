@@ -79,6 +79,12 @@ static const Target PSP[] = {{NO, "Aucun"}, {B, "\xE2\x9C\x95"}, {A, "\xE2\x97\x
                              {X, "\xE2\x96\xB3"}, {L, "L"}, {R, "R"}, {SELECT, "Select"}, {START, "Start"},
                              {UP, "Haut"}, {DOWN, "Bas"}, {LEFT, "Gauche"}, {RIGHT, "Droite"}};
 
+/* Our Vita3K (native_xr.cpp) reads this table from the settings when a game starts. */
+static const Target VITA[] = {{NO, "Aucun"}, {B, "\xE2\x9C\x95"}, {A, "\xE2\x97\x8B"}, {Y, "\xE2\x96\xA1"},
+                              {X, "\xE2\x96\xB3"}, {L, "L"}, {R, "R"}, {SELECT, "Select"}, {START, "Start"},
+                              {WFG_PAD_TOUCH_FRONT, "\xC3\x89" "cran tactile"}, {WFG_PAD_TOUCH_REAR, "Tactile arri\xC3\xA8re"},
+                              {RA, "Stick droit"}, {UP, "Haut"}, {DOWN, "Bas"}, {LEFT, "Gauche"}, {RIGHT, "Droite"}};
+
 static const struct {
     const char *name, *key;
     const Target *targets;
@@ -112,6 +118,8 @@ static const struct {
     /* The left stick is the analog nub, so the right stick gives the cross. */
     [WFG_PAD_PSP] = {"PSP", "psp", PSP, sizeof PSP / sizeof PSP[0],
                      {B, A, Y, X, L, R, L, R, UP, DOWN, LEFT, RIGHT, START, SELECT}},
+    [WFG_PAD_VITA] = {"PS Vita", "vita", VITA, sizeof VITA / sizeof VITA[0],
+                      {B, A, Y, X, WFG_PAD_TOUCH_REAR, WFG_PAD_TOUCH_FRONT, L, R, RA, RA, RA, RA, WFG_PAD_TOUCH_REAR, START}},
 };
 
 void wfg_padmap_defaults(WfgPadConsole console, int map[TI_COUNT]) {

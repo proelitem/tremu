@@ -89,7 +89,7 @@ static AAudioStream *audio;
 static struct retro_hw_render_callback hw;
 static bool hw_requested, hw_active;
 static EGLDisplay hw_display = EGL_NO_DISPLAY;
-static EGLContext hw_context = EGL_NO_CONTEXT;
+static EGLContext hw_context = EGL_NO_CONTEXT, hw_ppsspp_context = EGL_NO_CONTEXT;
 static EGLSurface hw_surface = EGL_NO_SURFACE;
 static GLuint hw_fbo, hw_color, hw_depth;
 static unsigned hw_w, hw_h;
@@ -293,9 +293,21 @@ static uintptr_t hw_framebuffer(void) { return hw_fbo; }
 static retro_proc_address_t hw_proc_address(const char *sym) { return (retro_proc_address_t)eglGetProcAddress(sym); }
 
 /* The emulator thread's EGL context (created once, never destroyed: the display is shared with
- * the XR renderer, which must not be terminated). */
+ * the XR renderer, which must not be terminated). PPSSPP gets its own: it counts on a context in its
+ * default state (after LRPS2 its picture was mostly black), and LRPS2 crashes on a new one. */
 static bool hw_make_current(void) {
-    if (hw_context == EGL_NO_CONTEXT) {
+    EGLContext *context = strstr(cur->name, "ppsspp") ? &hw_ppsspp_context : &hw_context;
+    if (hw_display != EGL_NO_DISPLAY && *context == EGL_NO_CONTEXT) {
+        const EGLint attrs[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR, EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+                                EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8, EGL_NONE};
+        EGLConfig config;
+        EGLint n = 0;
+        const EGLint context_attrs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+        if (eglChooseConfig(hw_display, attrs, &config, 1, &n) && n > 0)
+            *context = eglCreateContext(hw_display, config, EGL_NO_CONTEXT, context_attrs);
+        if (*context == EGL_NO_CONTEXT) { LOG("hw: EGL context failed"); return false; }
+    }
+    if (hw_display == EGL_NO_DISPLAY) {
         hw_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         if (!eglInitialize(hw_display, NULL, NULL)) return false;
         const EGLint attrs[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR, EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
@@ -304,12 +316,12 @@ static bool hw_make_current(void) {
         EGLint n = 0;
         if (!eglChooseConfig(hw_display, attrs, &config, 1, &n) || n < 1) { LOG("hw: no EGL config"); return false; }
         const EGLint context_attrs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
-        hw_context = eglCreateContext(hw_display, config, EGL_NO_CONTEXT, context_attrs);
+        *context = eglCreateContext(hw_display, config, EGL_NO_CONTEXT, context_attrs);
         const EGLint size[] = {EGL_WIDTH, 16, EGL_HEIGHT, 16, EGL_NONE};
         hw_surface = eglCreatePbufferSurface(hw_display, config, size);
-        if (hw_context == EGL_NO_CONTEXT || hw_surface == EGL_NO_SURFACE) { LOG("hw: EGL context failed"); return false; }
+        if (*context == EGL_NO_CONTEXT || hw_surface == EGL_NO_SURFACE) { LOG("hw: EGL context failed"); return false; }
     }
-    return eglMakeCurrent(hw_display, hw_surface, hw_surface, hw_context);
+    return eglMakeCurrent(hw_display, hw_surface, hw_surface, *context);
 }
 
 /* Framebuffer of the largest frame the core announced, then the core sets up its GL state. */

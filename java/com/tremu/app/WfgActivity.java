@@ -33,6 +33,30 @@ public final class WfgActivity extends NativeActivity {
         instance = this;
         intentGame = getIntent().getStringExtra("wfg_game");
         if (!gunPermitted()) requestPermissions(GUN_PERMISSIONS, 0x5746);
+        askForFiles();
+    }
+
+    private boolean askedForFiles;
+
+    /** Tremu/ (BIOS, posters, saves) needs access to all files, which a plain install does not give. */
+    private void askForFiles() {
+        if (android.os.Environment.isExternalStorageManager()) return;
+        askedForFiles = true;
+        android.net.Uri app = android.net.Uri.parse("package:" + getPackageName());
+        try {
+            startActivity(new android.content.Intent(
+                    android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, app));
+        } catch (android.content.ActivityNotFoundException e) {
+            android.util.Log.w("Tremu", "no screen to ask for access to all files: " + e);
+        }
+    }
+
+    /** Back from that screen with the access: start again, the native side has found no Tremu/. */
+    private void restartIfGivenFiles() {
+        if (!askedForFiles || !android.os.Environment.isExternalStorageManager()) return;
+        askedForFiles = false;
+        restartAfterExit();
+        android.os.Process.killProcess(android.os.Process.myPid());
     }
 
     /** The shared folder used to be WFGEmu/: on the same storage, a rename moves everything at once. */
@@ -130,10 +154,11 @@ public final class WfgActivity extends NativeActivity {
     public static boolean zipFolder(String folder, String zip) {
         java.io.File dir = new java.io.File(folder), out = new java.io.File(zip);
         java.io.File[] files = dir.listFiles();
-        if (files == null) return false;
+        // Without access to all files the folder reads as empty: such a zip must not stay as the game.
+        if (files == null || files.length == 0) return false;
         long newest = 0;
         for (java.io.File f : files) newest = Math.max(newest, f.lastModified());
-        if (out.exists() && out.lastModified() >= newest) return true;
+        if (out.exists() && out.length() > 22 && out.lastModified() >= newest) return true;
         java.io.File partial = new java.io.File(zip + ".part");
         out.getParentFile().mkdirs();
         try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(partial))) {
@@ -204,6 +229,7 @@ public final class WfgActivity extends NativeActivity {
                 .setClassName("org.vita3k.emulator", "org.vita3k.emulator.WfgLaunchActivity")
                 .putExtra("wfg_path", path)
                 .putExtra("title_id", VitaLibrary.titleId(new java.io.File(path)))
+                .putExtra("wfg_pad", VitaLibrary.padMap(new java.io.File(instance.getFilesDir(), "wfgemu.cfg")))
                 .putExtra("wfg_return_package", instance.getPackageName())
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
         WonderFitterGun.stop();
@@ -241,6 +267,7 @@ public final class WfgActivity extends NativeActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        restartIfGivenFiles();
         if (gunPermitted()) WonderFitterGun.start(this);
         LibraryServer.start(this);
         // Android drops broadcast packets unless an app holds this lock: needed for game discovery.

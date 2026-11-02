@@ -116,6 +116,8 @@ void wfg_options_load(const char *path, WfgOptions *o) {
     fclose(f);
     /* Version 2: on SNES, the Touch A gives Y and the Touch Y gives A (the player's choice). */
     if (pad_defaults < 2) wfg_padmap_defaults(WFG_PAD_SNES, o->pad_map[WFG_PAD_SNES]);
+    /* Version 4: on PS Vita, the triggers are L and R, the grips touch the screens, the left click the rear pad. */
+    if (pad_defaults < 4) wfg_padmap_defaults(WFG_PAD_VITA, o->pad_map[WFG_PAD_VITA]);
 }
 
 bool wfg_options_save(const char *path, const WfgOptions *o) {
@@ -129,7 +131,7 @@ bool wfg_options_save(const char *path, const WfgOptions *o) {
                       o->game, o->gun) > 0;
     fprintf(f, "voxels=%d\nai_depth=%d\nstereo=%d\nlanguage=%d\n", o->voxels ? 1 : 0, o->ai_depth ? 1 : 0, o->stereo, o->language);
     fprintf(f, "ext_buttons=%d,%d,%d,%d,%d\n", o->ext_buttons[0], o->ext_buttons[1], o->ext_buttons[2], o->ext_buttons[3], o->ext_buttons[4]);
-    fprintf(f, "pad_defaults=2\nbackground=%d\nx360_driver=%d\nadhoc_mac=%s\n", o->background, o->x360_driver, o->adhoc_mac);
+    fprintf(f, "pad_defaults=4\nbackground=%d\nx360_driver=%d\nadhoc_mac=%s\n", o->background, o->x360_driver, o->adhoc_mac);
     for (int c = 0; c < WFG_PAD_CONSOLES; c++) {
         fprintf(f, "pad.%s=", wfg_pad_config_key((WfgPadConsole)c));
         for (int i = 0; i < TI_COUNT; i++) fprintf(f, i ? ",%d" : "%d", o->pad_map[c][i]);
