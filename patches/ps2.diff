@@ -1,0 +1,1099 @@
+diff --git a/Makefile.common b/Makefile.common
+index 2ad453f..ac6e748 100644
+--- a/Makefile.common
++++ b/Makefile.common
+@@ -359,6 +359,7 @@ SOURCES_CXX += \
+ 	$(LRPS2_DIR)/USB/libretro-usb/hid.cpp \
+ 	$(LRPS2_DIR)/USB/libretro-usb/input-keymap-qcode-to-qnum.cpp \
+ 	$(LRPS2_DIR)/USB/libretro-usb/usb-hid.cpp \
++	$(LRPS2_DIR)/USB/libretro-usb/usb-guncon2.cpp \
+ 	$(LRPS2_DIR)/USB/libretro-usb/usb-ohci.cpp \
+ 	$(LRPS2_DIR)/USB/shared/ringbuffer.cpp \
+ 	$(LRPS2_DIR)/USB/usb-eyetoy/cam-frame.cpp \
+diff --git a/common/Pcsx2Defs.h b/common/Pcsx2Defs.h
+index bd750e0..3abbd19 100644
+--- a/common/Pcsx2Defs.h
++++ b/common/Pcsx2Defs.h
+@@ -111,7 +111,8 @@
+ // multiple times per emitted instruction during recompilation bursts. Safe
+ // for a dlopen'd core: glibc reserves static-TLS surplus for exactly this.
+ // No-op on MSVC, whose TLS never goes through a resolver call.
+-#if defined(_MSC_VER)
++// Not on Android: bionic refuses to dlopen a library with initial-exec TLS.
++#if defined(_MSC_VER) || defined(__ANDROID__)
+ 	#define PCSX2_TLS_INITIAL_EXEC
+ #else
+ 	#define PCSX2_TLS_INITIAL_EXEC __attribute__((tls_model("initial-exec")))
+diff --git a/libretro/USB.cpp b/libretro/USB.cpp
+index 4652483..ae74dde 100644
+--- a/libretro/USB.cpp
++++ b/libretro/USB.cpp
+@@ -13,11 +13,13 @@
+  *  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <atomic>
+ #include <cstdlib>
+ 
+ #include "../pcsx2/USB/USB.h"
+ #include "../pcsx2/USB/libretro-usb/USBinternal.h"
+ #include "../pcsx2/USB/libretro-usb/usb-hid.h"
++#include "../pcsx2/USB/libretro-usb/usb-guncon2.h"
+ #include "../pcsx2/USB/usb-eyetoy/usb-eyetoy-webcam.h"
+ #include "../pcsx2/USB/libretro-usb/desc.h"
+ #include "../pcsx2/USB/libretro-usb/usb-state.h"
+@@ -44,6 +46,10 @@ static unsigned   s_input_port[USB::NUM_PORTS]  = { 0, 1 };
+ static int        s_camera      = USB_CAMERA_NONE;
+ static int        s_camera_port = -1;
+ static USBDevice* s_usb_device[USB::NUM_PORTS]  = { nullptr, nullptr };
++/* A port whose device type changed while the machine runs: replugged on the emulation
++ * thread by the next USBasync, as plugging the device in. Frontends choose the controller
++ * type after loading the game, when the USB controller already exists. */
++static std::atomic<bool> s_port_changed[USB::NUM_PORTS];
+ 
+ /* From PAD.cpp - the libretro input_state callback the frontend installed. */
+ extern retro_input_state_t PADGetInputStateCallback(void);
+@@ -56,6 +62,8 @@ void USBSetPortDevice(unsigned port, int device, unsigned input_port)
+ {
+ 	if (port < USB::NUM_PORTS)
+ 	{
++		if (s_port_device[port] != device || s_input_port[port] != input_port)
++			s_port_changed[port] = true;
+ 		s_port_device[port] = device;
+ 		s_input_port[port]  = input_port;
+ 	}
+@@ -91,6 +99,9 @@ static void USBCreateDevice(u32 port)
+ 		case USB_DEV_MOUSE:
+ 			dev = usb_hid::usb_hid_create_mouse(port);
+ 			break;
++		case USB_DEV_GUNCON2:
++			dev = usb_guncon2::create(port);
++			break;
+ 		default:
+ 			return;
+ 	}
+@@ -204,6 +215,20 @@ void USBasync(u32 cycles)
+ 	if (!s_qemu_ohci)
+ 		return;
+ 
++	/* Plug in the devices whose type the frontend changed, one every half second: two new
++	 * devices at once would both answer the default address while the game enumerates them. */
++	{
++		static s64 s_next_plug_clock = 0;
++		for (u32 port = 0; port < USB::NUM_PORTS && s_usb_clocks >= s_next_plug_clock; port++)
++		{
++			if (!s_port_changed[port].exchange(false) || (int)port == s_camera_port)
++				continue;
++			USBDestroyDevice(port);
++			USBCreateDevice(port);
++			s_next_plug_clock = s_usb_clocks + PSXCLK / 2;
++		}
++	}
++
+ 	/* Pump one frame of frontend keyboard/mouse input into attached HID
+ 	 * devices before advancing the controller. */
+ 	{
+@@ -211,7 +236,11 @@ void USBasync(u32 cycles)
+ 		u32 port;
+ 		for (port = 0; port < USB::NUM_PORTS; port++)
+ 		{
+-			if (s_usb_device[port] && (int)port != s_camera_port)
++			if (!s_usb_device[port] || (int)port == s_camera_port)
++				continue;
++			if (s_port_device[port] == USB_DEV_GUNCON2)
++				usb_guncon2::update(s_usb_device[port], input_cb, s_input_port[port]);
++			else
+ 				usb_hid::usb_hid_update(s_usb_device[port], input_cb, s_input_port[port]);
+ 		}
+ 	}
+@@ -259,6 +288,7 @@ enum UsbStateKind
+ 	USB_KIND_MOUSE,
+ 	USB_KIND_EYETOY,
+ 	USB_KIND_CAPTURE_EYE,
++	USB_KIND_GUNCON2,
+ };
+ 
+ static u32 USBPortKind(u32 port)
+@@ -267,6 +297,8 @@ static u32 USBPortKind(u32 port)
+ 		return USB_KIND_NONE;
+ 	if ((int)port == s_camera_port)
+ 		return s_camera == USB_CAMERA_EYETOY ? USB_KIND_EYETOY : USB_KIND_CAPTURE_EYE;
++	if (s_port_device[port] == USB_DEV_GUNCON2)
++		return USB_KIND_GUNCON2;
+ 	return s_port_device[port] == USB_DEV_KEYBOARD ? USB_KIND_KEYBOARD : USB_KIND_MOUSE;
+ }
+ 
+@@ -373,6 +405,8 @@ static void USBFreezePort(u32 port, u32 kind, UsbState& st)
+ 	USBFreezeDevice(dev, st);
+ 	if (kind == USB_KIND_EYETOY || kind == USB_KIND_CAPTURE_EYE)
+ 		usb_eyetoy::eyetoy_freeze(dev, st);
++	else if (kind == USB_KIND_GUNCON2)
++		usb_guncon2::freeze(dev, st);
+ 	else
+ 		usb_hid::usb_hid_freeze(dev, st);
+ }
+diff --git a/pcsx2/CDVD/Ps1CD.c b/pcsx2/CDVD/Ps1CD.c
+index 3ca2638..cf8df99 100644
+--- a/pcsx2/CDVD/Ps1CD.c
++++ b/pcsx2/CDVD/Ps1CD.c
+@@ -13,6 +13,7 @@
+  *  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <stdlib.h> /* abs() */
+ #include <string.h>
+ 
+ 
+diff --git a/pcsx2/CMakeLists.txt b/pcsx2/CMakeLists.txt
+index aa22665..bb87a1d 100644
+--- a/pcsx2/CMakeLists.txt
++++ b/pcsx2/CMakeLists.txt
+@@ -817,6 +817,7 @@ set(pcsx2USBSources
+ 	USB/libretro-usb/hid.cpp
+ 	USB/libretro-usb/input-keymap-qcode-to-qnum.cpp
+ 	USB/libretro-usb/usb-hid.cpp
++	USB/libretro-usb/usb-guncon2.cpp
+ 	USB/libretro-usb/usb-ohci.cpp
+ 	USB/libretro-usb/ohci_dma.c
+ 	USB/libretro-usb/ohci_dma.h
+diff --git a/pcsx2/GS/Renderers/Common/GSDevice.cpp b/pcsx2/GS/Renderers/Common/GSDevice.cpp
+index 350502d..4e667a7 100644
+--- a/pcsx2/GS/Renderers/Common/GSDevice.cpp
++++ b/pcsx2/GS/Renderers/Common/GSDevice.cpp
+@@ -106,6 +106,10 @@ GSDevice::GSDevice()
+ 	m_vr_depth_missing = 0;
+ 	m_vr_ops          = NULL;
+ 	m_vr_snapshot     = NULL;
++	m_vr_hud[0]       = NULL;
++	m_vr_hud[1]       = NULL;
++	m_vr_hud_mask     = NULL;
++	m_vr_hud_base     = NULL;
+ }
+ 
+ GSDevice::~GSDevice()
+@@ -594,6 +598,13 @@ void GSDevice::VRRelease()
+ 	gs_texture_free(m_vr_range[0]);
+ 	gs_texture_free(m_vr_range[1]);
+ 	gs_texture_free(m_vr_snapshot);
++	gs_texture_free(m_vr_hud[0]);
++	gs_texture_free(m_vr_hud[1]);
++	gs_texture_free(m_vr_hud_mask);
++	m_vr_hud[0]        = NULL;
++	m_vr_hud[1]        = NULL;
++	m_vr_hud_mask      = NULL;
++	m_vr_hud_base      = NULL;
+ 	m_vr_atlas         = NULL;
+ 	m_vr_reduce[0]     = NULL;
+ 	m_vr_reduce[1]     = NULL;
+@@ -619,6 +630,16 @@ bool GSDevice::VRSnapshotDepth(GSTexture* depth)
+ 	return true;
+ }
+ 
++bool GSDevice::VRSnapshotScene(int slot, GSTexture* color)
++{
++	if (!m_vr_ops || !color)
++		return false;
++	if (!ResizeRenderTarget(&m_vr_hud[slot], color->GetWidth(), color->GetHeight(), false, true))
++		return false;
++	CopyRect(color, m_vr_hud[slot], color->GetRect(), 0, 0);
++	return true;
++}
++
+ GSTexture* GSDevice::VRBlank(const GSVector2i& eye_size)
+ {
+ 	if (eye_size.x <= 0 || eye_size.y <= 0)
+@@ -644,10 +665,10 @@ GSTexture* GSDevice::VRCompose(GSTexture* picture, const GSVRFrame& frame)
+ 	 * one's, rather than the picture going flat for a frame: depth that
+ 	 * comes and goes is worse than depth a frame old. */
+ 	hold = !frame.depth && m_vr_atlas && m_vr_atlas->GetWidth() == w &&
+-	       m_vr_atlas->GetHeight() == 2 * h + 1 && m_vr_depth_missing < VR_DEPTH_HOLD;
++	       m_vr_atlas->GetHeight() == 4 * h + 1 && m_vr_depth_missing < VR_DEPTH_HOLD;
+ 	m_vr_depth_missing = frame.depth ? 0 : m_vr_depth_missing + 1;
+ 
+-	if (!ResizeRenderTarget(&m_vr_atlas, w, 2 * h + 1, hold, true))
++	if (!ResizeRenderTarget(&m_vr_atlas, w, 4 * h + 1, hold, true))
+ 		return NULL;
+ 
+ 	/* Zero under the picture is the far plane wherever the game's frame
+@@ -670,6 +691,23 @@ GSTexture* GSDevice::VRCompose(GSTexture* picture, const GSVRFrame& frame)
+ 		StretchRect(frame.depth, frame.depth_rect, m_vr_atlas, dst,
+ 			frame.depth_encoded ? ShaderConvert::COPY : ShaderConvert::FLOAT32_TO_RGBA8, false);
+ 
++		if (m_vr_hud_base && frame.hud_final && m_vr_hud_base->GetSize() == frame.hud_final->GetSize() &&
++			ResizeRenderTarget(&m_vr_hud_mask, w, h, false, true))
++		{
++			const GSVector4 whole(0.0f, 0.0f, (float)w, (float)h);
++			VRRangeConstants mask;
++
++			StretchRect(m_vr_hud_base, frame.hud_rect, m_vr_atlas,
++				frame.picture_rect + GSVector4(0.0f, (float)(2 * h + 1), 0.0f, (float)(2 * h + 1)), ShaderConvert::COPY, false);
++			StretchRect(frame.hud_final, frame.hud_rect, m_vr_atlas,
++				frame.picture_rect + GSVector4(0.0f, (float)(3 * h + 1), 0.0f, (float)(3 * h + 1)), ShaderConvert::COPY, false);
++			mask.src     = GSVector4i(0, h, w, h);
++			mask.params  = GSVector4i(1, VR_RANGE_HUD_MASK, 2 * h + 1, 3 * h + 1);
++			mask.fparams = GSVector4::zero();
++			m_vr_ops->range(this, m_vr_atlas, m_vr_hud_mask, &whole, &mask);
++			CopyRect(m_vr_hud_mask, m_vr_atlas, GSVector4i(0, 0, w, h), 0, h);
++		}
++
+ 		/* The last level has a column more, for last frame's range: the
+ 		 * pass that eases towards it reads both through its one texture. */
+ 		ok = ResizeRenderTarget(&m_vr_reduce[0], w1, h1, false, true) &&
+diff --git a/pcsx2/GS/Renderers/Common/GSDevice.h b/pcsx2/GS/Renderers/Common/GSDevice.h
+index 90afacc..d2ae274 100644
+--- a/pcsx2/GS/Renderers/Common/GSDevice.h
++++ b/pcsx2/GS/Renderers/Common/GSDevice.h
+@@ -227,6 +227,8 @@ struct alignas(16) InterlaceConstantBuffer
+  * and how far towards the new range a frame moves. */
+ #define VR_RANGE_FROM_Z 1
+ #define VR_RANGE_SMOOTH 2
++/* Not a range: marks in the Z bytes of src what differs between rows z and w. */
++#define VR_RANGE_HUD_MASK 4
+ 
+ struct alignas(16) VRRangeConstants
+ {
+@@ -274,6 +276,10 @@ struct GSVRFrame
+ 	GSVector4 depth_rect;
+ 	GSVector4 picture_rect;
+ 	GSTexture* depth;
++	/* The frame buffer behind the picture, and the part of it shown (normalised):
++	 * compared with what it held when the scene was finished (m_vr_hud_base). */
++	GSTexture* hud_final;
++	GSVector4 hud_rect;
+ 	GSVector2i eye_size;
+ 	float z_scale;
+ 	bool depth_encoded;
+@@ -993,6 +999,11 @@ public:
+ 	 * frame buffer it was drawn with once the game draws another with it;
+ 	 * NULL until one is taken. */
+ 	GSTexture* m_vr_snapshot;
++	/* The frame buffers as they were when their scene was finished; the one
++	 * under the displayed frame, NULL if none. */
++	GSTexture* m_vr_hud[2];
++	GSTexture* m_vr_hud_mask;
++	GSTexture* m_vr_hud_base;
+ 	void Free();
+ 
+ 	/// Generates a fixed index buffer for expanding points and sprites. Buffer is assumed to be at least EXPAND_BUFFER_SIZE in size.
+@@ -1102,6 +1113,7 @@ public:
+ 	GSTexture* VRCompose(GSTexture* picture, const GSVRFrame& frame);
+ 	GSTexture* VRBlank(const GSVector2i& eye_size);
+ 	bool VRSnapshotDepth(GSTexture* depth);
++	bool VRSnapshotScene(int slot, GSTexture* color);
+ 	void VRRelease();
+ 
+ 	void Merge(GSTexture* sTex[3], GSVector4* sRect, GSVector4* dRect, const GSVector2i& fs, const GSRegPMODE& PMODE, const GSRegEXTBUF& EXTBUF, u32 c);
+diff --git a/pcsx2/GS/Renderers/Common/GSRenderer.cpp b/pcsx2/GS/Renderers/Common/GSRenderer.cpp
+index 22a7c77..8fb7a5e 100644
+--- a/pcsx2/GS/Renderers/Common/GSRenderer.cpp
++++ b/pcsx2/GS/Renderers/Common/GSRenderer.cpp
+@@ -457,6 +457,8 @@ GSTexture* GSState::VRFrame(GSTexture* current, bool blank_frame)
+ 	frame.z_scale       = 0.0f;
+ 	frame.depth_rect    = GSVector4::zero();
+ 	frame.picture_rect  = GSVector4::zero();
++	frame.hud_final     = m_vr_merge_tex;
++	frame.hud_rect      = m_vr_merge_src;
+ 	if (m_vr_merge_tex && m_ops && m_ops->get_vr_depth && m_real_size.x > 0 && m_real_size.y > 0 &&
+ 		m_ops->get_vr_depth(this, m_vr_merge_tex, &frame.depth, &frame.depth_encoded, &frame.z_scale))
+ 	{
+diff --git a/pcsx2/GS/Renderers/Common/vr_glsl_body.h b/pcsx2/GS/Renderers/Common/vr_glsl_body.h
+index ae09ad6..9c268cc 100644
+--- a/pcsx2/GS/Renderers/Common/vr_glsl_body.h
++++ b/pcsx2/GS/Renderers/Common/vr_glsl_body.h
+@@ -19,7 +19,10 @@
+  * 16-bit fractions of the Z format's range: the least in red and green,
+  * the greatest in blue and alpha. A range
+  * whose min is not below its max is no range, which is what a texel of
+- * zeros is.
++ * zeros is. Rows [2H + 1, 3H + 1) hold the frame buffer as it was when the
++ * scene was finished and rows [3H + 1, 4H + 1) as it is now: where they
++ * differ, 2D was drawn over the scene (the HUD), and the Z bytes become
++ * all ones, which means on the window whatever the range.
+  *
+  * The eye: the picture is a window, screen.x by screen.y, centred on
+  * -z at screen.z. Behind it each pixel has a depth, the inverse of its
+@@ -43,6 +46,11 @@
+ "	return dot(vr_bytes(c), vec4(1.0, 256.0, 65536.0, 16777216.0)) * scale;\n" \
+ "}\n" \
+ "\n" \
++"bool vr_is_hud(vec4 c)\n" \
++"{\n" \
++"	return all(greaterThan(c, vec4(0.998)));\n" \
++"}\n" \
++"\n" \
+ "vec2 vr_range_decode(vec4 c)\n" \
+ "{\n" \
+ "	vec4 b = vr_bytes(c);\n" \
+@@ -61,6 +69,15 @@
+ "// part of the range.\n" \
+ "void ps_vr_range()\n" \
+ "{\n" \
++"	if ((Params.y & 4) != 0)\n" \
++"	{\n" \
++"		ivec2 f = ivec2(gl_FragCoord.xy);\n" \
++"		vec3 before = texelFetch(samp0, ivec2(f.x, Params.z + f.y), 0).rgb;\n" \
++"		vec3 after = texelFetch(samp0, ivec2(f.x, Params.w + f.y), 0).rgb;\n" \
++"		o_col0 = any(greaterThan(abs(before - after), vec3(0.012))) ? vec4(1.0) : texelFetch(samp0, SrcRect.xy + f, 0);\n" \
++"		return;\n" \
++"	}\n" \
++"\n" \
+ "	ivec2 base = ivec2(gl_FragCoord.xy) * Params.x;\n" \
+ "	vec2 r = vec2(1.0, 0.0);\n" \
+ "	for (int y = 0; y < Params.x; y++)\n" \
+@@ -74,7 +91,7 @@
+ "			if ((Params.y & 1) != 0)\n" \
+ "			{\n" \
+ "				float z = vr_z(c, FParams.x);\n" \
+-"				if (z > 0.0)\n" \
++"				if (z > 0.0 && !vr_is_hud(c))\n" \
+ "					r = vec2(min(r.x, z), max(r.y, z));\n" \
+ "			}\n" \
+ "			else\n" \
+@@ -99,6 +116,16 @@
+ "#endif\n" \
+ "\n" \
+ "#ifdef ps_vr_eye\n" \
++"// Of the frame's range of depth, how far behind the surface a ray is once it\n" \
++"// has crossed a wall.\n" \
++"const float VR_WALL = 0.06;\n" \
++"// In pixels of the picture, past the antialiased pixels of the edge.\n" \
++"const float VR_EDGE_MARGIN = 1.5;\n" \
++"// What fills the gap: how much of the width hidden behind the edge it takes\n" \
++"// from the background beside it, and over how many rows it is averaged.\n" \
++"const float VR_FILL_STRETCH = 0.5;\n" \
++"const float VR_FILL_ROWS = 2.0;\n" \
++"\n" \
+ "// What every step needs: the picture's size, the frame's range of Z, and\n" \
+ "// the depths of its nearest and farthest.\n" \
+ "struct VRRelief\n" \
+@@ -133,7 +160,10 @@
+ "float vr_surface(VRRelief r, vec2 uv)\n" \
+ "{\n" \
+ "	ivec2 p = clamp(ivec2(uv * vec2(r.size)), ivec2(0), r.size - 1);\n" \
+-"	float z = vr_z(texelFetch(samp0, ivec2(p.x, r.size.y + p.y), 0), DepthMap.z);\n" \
++"	vec4 c = texelFetch(samp0, ivec2(p.x, r.size.y + p.y), 0);\n" \
++"	if (vr_is_hud(c))\n" \
++"		return 1.0;\n" \
++"	float z = vr_z(c, DepthMap.z);\n" \
+ "	float n = (z > 0.0) ? clamp((z - r.range.x) / (r.range.y - r.range.x), 0.0, 1.0) : 0.0;\n" \
+ "	return mix(r.far_w, r.near_w, n);\n" \
+ "}\n" \
+@@ -143,11 +173,18 @@
+ "	return vr_point(e, d, w, uv) && vr_inside(uv) && w <= vr_surface(r, uv);\n" \
+ "}\n" \
+ "\n" \
++"// The picture's rows only: filtering is not to reach the depth.\n" \
++"vec3 vr_picture(VRRelief r, ivec2 atlas, vec2 uv)\n" \
++"{\n" \
++"	float y = clamp(uv.y * float(r.size.y), 0.5, float(r.size.y) - 0.5);\n" \
++"	return texture(samp0, vec2(uv.x, y / float(atlas.y))).rgb;\n" \
++"}\n" \
++"\n" \
+ "void ps_vr_eye()\n" \
+ "{\n" \
+ "	ivec2 atlas = textureSize(samp0, 0);\n" \
+ "	VRRelief r;\n" \
+-"	r.size = ivec2(atlas.x, (atlas.y - 1) / 2);\n" \
++"	r.size = ivec2(atlas.x, (atlas.y - 1) / 4);\n" \
+ "	r.range = vr_range_decode(texelFetch(samp0, ivec2(0, 2 * r.size.y), 0));\n" \
+ "	bool flat_window = !(r.range.x < r.range.y);\n" \
+ "	r.near_w = flat_window ? 1.0 : DepthMap.x;\n" \
+@@ -172,6 +209,7 @@
+ "\n" \
+ "	vec2 uv = vec2(0.0);\n" \
+ "	float prev = w_hi;\n" \
++"	float hit_w = w_hi;\n" \
+ "	bool hit = false;\n" \
+ "	for (int i = 0; i <= steps; i++)\n" \
+ "	{\n" \
+@@ -195,6 +233,7 @@
+ "					lo = m;\n" \
+ "				}\n" \
+ "			}\n" \
++"			hit_w = hi;\n" \
+ "			hit = true;\n" \
+ "			break;\n" \
+ "		}\n" \
+@@ -203,8 +242,20 @@
+ "	if (!hit)\n" \
+ "		return;\n" \
+ "\n" \
+-"	// The picture's rows only: filtering is not to reach the depth.\n" \
+-"	float y = clamp(uv.y * float(r.size.y), 0.5, float(r.size.y) - 0.5);\n" \
+-"	o_col0 = vec4(texture(samp0, vec2(uv.x, y / float(atlas.y))).rgb, 1.0);\n" \
++"	// The ray ran into the side of something: what it sees there is behind\n" \
++"	// that thing in the picture. Not its edge drawn out into a streak, but\n" \
++"	// the background next to it, stretched, and softened over a few rows.\n" \
++"	if (span > 0.5 && vr_surface(r, uv) - hit_w > VR_WALL * (r.near_w - r.far_w))\n" \
++"	{\n" \
++"		vec2 edge = uv - (uv_lo - uv_hi) / span * VR_EDGE_MARGIN;\n" \
++"		vec2 seen;\n" \
++"		vr_point(e, d, vr_surface(r, edge), seen);\n" \
++"		vec2 fill = clamp(edge - VR_FILL_STRETCH * (seen - edge), vec2(0.0), vec2(1.0));\n" \
++"		vec2 rows = vec2(0.0, VR_FILL_ROWS / float(r.size.y));\n" \
++"		o_col0 = vec4(0.5 * (vr_picture(r, atlas, fill - rows) + vr_picture(r, atlas, fill + rows)), 1.0);\n" \
++"		return;\n" \
++"	}\n" \
++"\n" \
++"	o_col0 = vec4(vr_picture(r, atlas, uv), 1.0);\n" \
+ "}\n" \
+ "#endif\n"
+diff --git a/pcsx2/GS/Renderers/HW/GSRendererHW.cpp b/pcsx2/GS/Renderers/HW/GSRendererHW.cpp
+index 3686339..4f53ede 100644
+--- a/pcsx2/GS/Renderers/HW/GSRendererHW.cpp
++++ b/pcsx2/GS/Renderers/HW/GSRendererHW.cpp
+@@ -80,6 +80,10 @@ GSRendererHW::GSRendererHW()
+ 	MULTI_ISA_SELECT(GSRendererHWPopulateFunctions)(*this);
+ 
+ 	memset(m_vr_pairs, 0, sizeof(m_vr_pairs));
++	memset(m_vr_hud_bases, 0, sizeof(m_vr_hud_bases));
++	m_vr_hud_armed_fbp   = 0;
++	m_vr_hud_armed       = false;
++	m_vr_hud_next        = 0;
+ 	memset(&m_vr_snapshot, 0, sizeof(m_vr_snapshot));
+ 	memset(m_vr_frame_buffers, 0, sizeof(m_vr_frame_buffers));
+ 	m_vr_output_tex[0]   = NULL;
+@@ -261,6 +265,40 @@ static float vr_z_scale(u32 zpsm)
+ 	return 1.0f / 4294967296.0f;
+ }
+ 
++void GSRendererHW::VRHudDraw(GSTextureCache::Target* rt)
++{
++	if (!rt)
++		return;
++
++	const u32 fbp = rt->m_TEX0.TBP0;
++	const GSVector4i size = rt->GetUnscaledRect();
++	int slot = -1;
++	for (int i = 0; i < 2; i++)
++		if (m_vr_hud_bases[i].fbp == fbp)
++			slot = i;
++
++	const bool z_tested = m_cached_ctx.TEST.ZTE && m_cached_ctx.TEST.ZTST != ZTST_ALWAYS;
++	if (z_tested || m_r.width() * m_r.height() * 10 >= size.width() * size.height() * 4)
++	{
++		if (slot >= 0)
++			m_vr_hud_bases[slot].valid = false;
++		if (z_tested)
++		{
++			m_vr_hud_armed = true;
++			m_vr_hud_armed_fbp = m_cached_ctx.FRAME.Block();
++		}
++		return;
++	}
++
++	if (!m_vr_hud_armed || m_vr_hud_armed_fbp != m_cached_ctx.FRAME.Block())
++		return;
++	m_vr_hud_armed = false;
++	if (slot < 0)
++		slot = static_cast<int>(m_vr_hud_next++ & 1);
++	m_vr_hud_bases[slot].fbp = fbp;
++	m_vr_hud_bases[slot].valid = g_gs_device->VRSnapshotScene(slot, rt->m_texture);
++}
++
+ void GSRendererHW::VRColorDrawn(u32 fbp)
+ {
+ 	VRFrameBuffer* slot = &m_vr_frame_buffers[0];
+@@ -355,6 +393,11 @@ bool GSRendererHW::GetVRDepth(GSTexture* color, GSTexture** depth, bool* encoded
+ 	fbp   = m_vr_output_bp[c];
+ 	scale = m_vr_output_scale[c];
+ 
++	g_gs_device->m_vr_hud_base = NULL;
++	for (i = 0; i < 2; i++)
++		if (m_vr_hud_bases[i].valid && m_vr_hud_bases[i].fbp == fbp)
++			g_gs_device->m_vr_hud_base = g_gs_device->m_vr_hud[i];
++
+ 	/* The depth buffer the frame buffer was last drawn with; failing
+ 	 * that, the one drawn with last of all. A frame buffer no depth was
+ 	 * drawn with is most often the scene copied there to be shown,
+@@ -4124,6 +4167,8 @@ void GSRendererHW::Draw()
+ 	const GSVector4i real_rect = m_r;
+ 
+ 	if (!skip_draw)
++		if (m_vr_active)
++			VRHudDraw(rt);
+ 		DrawPrims(rt, ds, src, tmm);
+ 
+ 	//
+diff --git a/pcsx2/GS/Renderers/HW/GSRendererHW.h b/pcsx2/GS/Renderers/HW/GSRendererHW.h
+index 72fbf98..db5dee7 100644
+--- a/pcsx2/GS/Renderers/HW/GSRendererHW.h
++++ b/pcsx2/GS/Renderers/HW/GSRendererHW.h
+@@ -86,6 +86,22 @@ private:
+ 	VRDepthPair m_vr_snapshot;
+ 	VRFrameBuffer m_vr_frame_buffers[VR_FRAME_BUFFERS];
+ 	float m_vr_snapshot_scale;
++	/* The frame buffer holding the finished scene, per buffer of the game's
++	 * two: taken at the first small draw without a Z test after a Z-tested
++	 * one, since from there on what changes is the HUD, which may well write
++	 * Z. A Z-tested draw starts the buffer's scene again, and a draw over the
++	 * whole screen (a filter, a fade; a screen may be half of a field-drawn
++	 * buffer) still belongs to it: either leaves no copy until the next one. */
++	struct VRHudBase
++	{
++		u32 fbp;
++		bool valid;
++	};
++	VRHudBase m_vr_hud_bases[2];
++	u32 m_vr_hud_armed_fbp;
++	bool m_vr_hud_armed;
++	u32 m_vr_hud_next;
++	void VRHudDraw(GSTextureCache::Target* rt);
+ 	/* A count of the draws and one of the vsyncs, while VR is on. */
+ 	u32 m_vr_age;
+ 	u32 m_vr_frame;
+diff --git a/pcsx2/PAD/PAD.cpp b/pcsx2/PAD/PAD.cpp
+index 8f89110..bde9c04 100644
+--- a/pcsx2/PAD/PAD.cpp
++++ b/pcsx2/PAD/PAD.cpp
+@@ -201,6 +201,9 @@ struct pad_input
+ 	u8  analog[12];
+ 	u8  keys[RETROK_LAST / 8 + 1];
+ 	u8  mouse_buttons;
++	/* Light gun (GunCon 2): screen position and RETRO_DEVICE_ID_LIGHTGUN_* button bits. */
++	s16 gun_x, gun_y;
++	u32 gun_buttons;
+ };
+ /* Indexed by SIO pad (sioConvertPortAndSlotToPad); see pad_for_port. */
+ static struct pad_input pad_staged[NUM_CONTROLLER_PORTS];
+@@ -263,6 +266,14 @@ static int16_t pad_latched_input(unsigned port, unsigned device, unsigned index,
+ 	in = &pad_live[pad];
+ 	if (device == RETRO_DEVICE_KEYBOARD)
+ 		return id < RETROK_LAST && ((in->keys[id >> 3] >> (id & 7)) & 1);
++	if (device == RETRO_DEVICE_LIGHTGUN)
++	{
++		if (id == RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X)
++			return in->gun_x;
++		if (id == RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y)
++			return in->gun_y;
++		return id < 32 && ((in->gun_buttons >> id) & 1);
++	}
+ 	if (device != RETRO_DEVICE_MOUSE)
+ 		return 0;
+ 	switch (id)
+@@ -463,6 +474,7 @@ namespace Input
+ 			{ "USB Keyboard", RETRO_DEVICE_KEYBOARD },
+ 			{ "USB Mouse", RETRO_DEVICE_MOUSE },
+ 			{ "USB Keyboard + Mouse", RETRO_DEVICE_KEYBOARD_AND_MOUSE },
++			{ "GunCon 2", RETRO_DEVICE_LIGHTGUN },
+ 			{},
+ 		};
+ 
+@@ -573,6 +585,24 @@ namespace Input
+ 					| (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_MIDDLE) ? 4 : 0));
+ 			}
+ 
++			if (pad_type[port] == RETRO_DEVICE_LIGHTGUN)
++			{
++				static const unsigned gun_ids[] = {
++					RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN, RETRO_DEVICE_ID_LIGHTGUN_TRIGGER,
++					RETRO_DEVICE_ID_LIGHTGUN_RELOAD, RETRO_DEVICE_ID_LIGHTGUN_AUX_A, RETRO_DEVICE_ID_LIGHTGUN_AUX_B,
++					RETRO_DEVICE_ID_LIGHTGUN_AUX_C, RETRO_DEVICE_ID_LIGHTGUN_START, RETRO_DEVICE_ID_LIGHTGUN_SELECT,
++					RETRO_DEVICE_ID_LIGHTGUN_DPAD_UP, RETRO_DEVICE_ID_LIGHTGUN_DPAD_DOWN,
++					RETRO_DEVICE_ID_LIGHTGUN_DPAD_LEFT, RETRO_DEVICE_ID_LIGHTGUN_DPAD_RIGHT,
++				};
++				u32 bits = 0;
++				for (unsigned id : gun_ids)
++					if (input_cb(port, RETRO_DEVICE_LIGHTGUN, 0, id))
++						bits |= 1u << id;
++				pad_staged[pad].gun_x       = (s16)input_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X);
++				pad_staged[pad].gun_y       = (s16)input_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y);
++				pad_staged[pad].gun_buttons = bits;
++			}
++
+ 			pad_staged[pad].buttons = new_button_mask;
+ 			pad_staged[pad].lx      = new_lx;
+ 			pad_staged[pad].ly      = new_ly;
+@@ -636,6 +666,11 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
+ 				s_pad_type_name[port] = "DualShock2";
+ 				USBSetPortDevice(port, USB_DEV_MOUSE, port);
+ 				break;
++			case RETRO_DEVICE_LIGHTGUN:
++				/* GunCon 2 on this USB port; the DualShock on this slot stays for menus. */
++				s_pad_type_name[port] = "DualShock2";
++				USBSetPortDevice(port, USB_DEV_GUNCON2, port);
++				break;
+ 			case RETRO_DEVICE_KEYBOARD_AND_MOUSE:
+ 				/* Keyboard + mouse together claim both USB ports (kbd on 0,
+ 				 * mouse on 1) regardless of which controller port this was
+diff --git a/pcsx2/USB/USB.h b/pcsx2/USB/USB.h
+index ac2f1c1..0effdfc 100644
+--- a/pcsx2/USB/USB.h
++++ b/pcsx2/USB/USB.h
+@@ -76,6 +76,7 @@ enum UsbPortDevice
+ 	USB_DEV_NONE = 0,
+ 	USB_DEV_KEYBOARD,
+ 	USB_DEV_MOUSE,
++	USB_DEV_GUNCON2,
+ };
+ 
+ void USBSetPortDevice(unsigned port, int device, unsigned input_port);
+diff --git a/pcsx2/USB/libretro-usb/usb-guncon2.cpp b/pcsx2/USB/libretro-usb/usb-guncon2.cpp
+new file mode 100644
+index 0000000..f6d2459
+--- /dev/null
++++ b/pcsx2/USB/libretro-usb/usb-guncon2.cpp
+@@ -0,0 +1,428 @@
++/*  PCSX2 - PS2 Emulator for PCs
++ *  Copyright (C) 2002-2026  PCSX2 Dev Team
++ *
++ *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
++ *  of the GNU Lesser General Public License as published by the Free Software Found-
++ *  ation, either version 3 of the License, or (at your option) any later version.
++ *
++ *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
++ *  PURPOSE.  See the GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License along with PCSX2.
++ *  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/* The GunCon 2 of PCSX2's usb-lightgun/guncon2.cpp on the libretro USB stack: the same USB
++ * descriptors, 6-byte reports, Time Crisis calibration and per-game scales, with the screen
++ * position taken from RETRO_DEVICE_LIGHTGUN instead of the host pointer. */
++
++#include <cctype>
++#include <cmath>
++#include <cstring>
++
++#include "USB/libretro-usb/USBinternal.h"
++#include "USB/libretro-usb/desc.h"
++#include "USB/libretro-usb/usb-guncon2.h"
++#include "CDVD/CDVD.h"
++
++namespace usb_guncon2
++{
++	enum : u32
++	{
++		GUNCON2_FLAG_PROGRESSIVE = 0x0100,
++
++		GUNCON2_CALIBRATION_DELAY = 12,
++		GUNCON2_CALIBRATION_REPORT_DELAY = 5,
++	};
++
++	enum : u32
++	{
++		BID_C = 1,
++		BID_B = 2,
++		BID_A = 3,
++		BID_DPAD_UP = 4,
++		BID_DPAD_RIGHT = 5,
++		BID_DPAD_DOWN = 6,
++		BID_DPAD_LEFT = 7,
++		BID_TRIGGER = 13,
++		BID_SELECT = 14,
++		BID_START = 15,
++		BID_SHOOT_OFFSCREEN = 16,
++		BID_RECALIBRATE = 17,
++	};
++
++	/* Different games use different scales (values from the old nuvee plugin, via PCSX2). */
++	struct GameConfig
++	{
++		const char* serial;
++		float scale_x, scale_y;
++		u32 center_x, center_y;
++		u32 screen_width, screen_height;
++	};
++
++	static constexpr const GameConfig s_game_config[] = {
++		{"SLES-50930", 90.25f, 94.5f, 390, 132, 640, 256}, // Dino Stalker (E, English)
++		{"SLES-51095", 90.25f, 94.5f, 390, 132, 640, 256}, // Dino Stalker (E, French)
++		{"SLES-51096", 90.25f, 94.5f, 390, 132, 640, 256}, // Dino Stalker (E, German)
++		{"SLUS-20485", 90.25f, 92.5f, 390, 132, 640, 240}, // Dino Stalker (U)
++		{"SLUS-20389", 89.25f, 93.5f, 422, 141, 640, 240}, // Endgame (U)
++		{"SLES-50936", 112.0f, 100.0f, 320, 120, 512, 256}, // Endgame (E)
++		{"SLPM-65139", 90.0f, 91.5f, 320, 120, 640, 240}, // Gun Survivor 3: Dino Crisis (J)
++		{"SLES-52620", 89.5f, 112.3f, 390, 147, 640, 256}, // Guncom 2 (E)
++		{"SLES-51289", 84.5f, 89.0f, 456, 164, 640, 256}, // Gunfighter 2 - Jesse James (E)
++		{"SLPS-25165", 90.25f, 98.0f, 390, 138, 640, 240}, // Gunvari Collection (J) (480i)
++		{"SCES-50889", 90.25f, 94.5f, 390, 169, 640, 256}, // Ninja Assault (E)
++		{"SLPS-20218", 90.0f, 92.0f, 320, 134, 640, 240}, // Ninja Assault (J)
++		{"SLUS-20492", 90.25f, 92.5f, 390, 132, 640, 240}, // Ninja Assault (U)
++		{"SLES-50650", 84.75f, 96.0f, 454, 164, 640, 240}, // Resident Evil Survivor 2 (E)
++		{"SLES-51448", 90.25f, 95.0f, 420, 132, 640, 240}, // Resident Evil - Dead Aim (E)
++		{"SLUS-20669", 90.25f, 93.5f, 420, 132, 640, 240}, // Resident Evil - Dead Aim (U)
++		{"SLUS-20619", 90.25f, 91.75f, 453, 154, 640, 256}, // Starsky & Hutch (U)
++		{"SCES-50300", 90.25f, 102.75f, 390, 138, 640, 256}, // Time Crisis II (E)
++		{"SLPS-20122", 90.25f, 97.5f, 390, 154, 640, 240}, // Time Crisis II (J)
++		{"SLPS-20113", 90.25f, 97.5f, 390, 154, 640, 240}, // Time Crisis II (with GunCon 2) (J)
++		{"SLUS-20219", 90.25f, 97.5f, 390, 154, 640, 240}, // Time Crisis 2 (U)
++		{"SCES-51844", 90.25f, 102.75f, 390, 138, 640, 256}, // Time Crisis 3 (E)
++		{"SLUS-20645", 90.25f, 97.5f, 390, 154, 640, 240}, // Time Crisis 3 (U)
++		{"SCES-52530", 90.25f, 99.0f, 390, 153, 640, 256}, // Crisis Zone (E)
++		{"SLUS-20927", 90.25f, 99.0f, 390, 153, 640, 240}, // Time Crisis - Crisis Zone (U) (480i)
++		{"SCES-50411", 89.8f, 99.9f, 421, 138, 640, 256}, // Vampire Night (E)
++		{"SLPS-25077", 90.0f, 97.5f, 422, 118, 640, 240}, // Vampire Night (J)
++		{"SLUS-20221", 89.8f, 102.5f, 422, 124, 640, 228}, // Vampire Night (U)
++		{"SLES-51229", 110.15f, 100.0f, 433, 159, 512, 256}, // Virtua Cop - Elite Edition (E,J) (480i)
++		{"SLPM-62205", 110.15f, 100.0f, 433, 159, 512, 256}, // Virtua Cop Re-Birth (J) (480i)
++	};
++
++#pragma pack(push, 1)
++	union GunCon2Out
++	{
++		u8 bits[6];
++
++		struct
++		{
++			u16 buttons;
++			s16 pos_x;
++			s16 pos_y;
++		};
++	};
++	static_assert(sizeof(GunCon2Out) == 6, "GunCon 2 report");
++#pragma pack(pop)
++
++	struct GunCon2State
++	{
++		explicit GunCon2State(u32 port_) : port(port_) {}
++
++		USBDevice dev{};
++		USBDesc desc{};
++		USBDescDevice desc_dev{};
++
++		u32 port = 0;
++
++		/* Configuration (from the disc serial on the first control request). */
++		u32 screen_width = 640;
++		u32 screen_height = 240;
++		float center_x = 320;
++		float center_y = 120;
++		float scale_x = 1.0f;
++		float scale_y = 1.0f;
++		bool auto_config_done = false;  /* not saved: AutoConfigure runs again after a load */
++
++		/* Host state (not saved): buttons and position read from the frontend, 0..1. */
++		u32 button_state = 0;
++		bool on_screen = false;
++		float pointer_x = 0.5f, pointer_y = 0.5f;
++
++		/* Device state (saved). */
++		s16 param_x = 0;
++		s16 param_y = 0;
++		u16 param_mode = 0;
++		u16 calibration_timer = 0;
++		s16 calibration_pos_x = 0;
++		s16 calibration_pos_y = 0;
++
++		void AutoConfigure();
++		void CalculatePosition(s16* pos_x, s16* pos_y) const;
++	};
++
++	static const USBDescStrings desc_strings = {
++		"",
++		"Namco GunCon2",
++	};
++
++	static const uint8_t guncon2_dev_desc[] = {
++		/* bLength             */ 0x12,
++		/* bDescriptorType     */ 0x01,
++		/* bcdUSB              */ WBVAL(0x0100),
++		/* bDeviceClass        */ 0x00,
++		/* bDeviceSubClass     */ 0x00,
++		/* bDeviceProtocol     */ 0x00,
++		/* bMaxPacketSize0     */ 0x08,
++		/* idVendor            */ WBVAL(0x0b9a),
++		/* idProduct           */ WBVAL(0x016a),
++		/* bcdDevice           */ WBVAL(0x0100),
++		/* iManufacturer       */ 0x00,
++		/* iProduct            */ 0x00,
++		/* iSerialNumber       */ 0x00,
++		/* bNumConfigurations  */ 0x01,
++	};
++
++	static const uint8_t guncon2_config_desc[] = {
++		0x09, // Length
++		0x02, // Type (Config)
++		0x19, 0x00, // Total size
++		0x01, // # interfaces
++		0x01, // Configuration #
++		0x00, // index of string descriptor
++		0x80, // Attributes (bus powered)
++		0x19, // Max power in mA
++
++		// Interface
++		0x09, // Length
++		0x04, // Type (Interface)
++		0x00, // Interface #
++		0x00, // Alternative #
++		0x01, // # endpoints
++		0xff, // Class
++		0x6a, // Subclass
++		0x00, // Protocol
++		0x00, // index of string descriptor
++
++		// Endpoint
++		0x07, // Length
++		0x05, // Type (Endpoint)
++		0x81, // Address
++		0x03, // Attributes (interrupt transfers)
++		0x08, 0x00, // Max packet size
++		0x08, // Polling interval (frame counts)
++	};
++
++	/* "SCES-50300" and "SCES_503.00" both name the same disc: compare letters and digits only. */
++	static bool same_serial(const char* a, const char* b)
++	{
++		for (;;)
++		{
++			while (*a && !isalnum((unsigned char)*a))
++				a++;
++			while (*b && !isalnum((unsigned char)*b))
++				b++;
++			if (!*a || !*b)
++				return !*a && !*b;
++			if (toupper((unsigned char)*a++) != toupper((unsigned char)*b++))
++				return false;
++		}
++	}
++
++	void GunCon2State::AutoConfigure()
++	{
++		for (const GameConfig& gc : s_game_config)
++		{
++			if (!same_serial(DiscSerial, gc.serial))
++				continue;
++			log_cb(RETRO_LOG_INFO, "GunCon2: settings for %s: scale %.4fx%.4f, centre %ux%u, screen %ux%u\n",
++				gc.serial, gc.scale_x / 100.0f, gc.scale_y / 100.0f, gc.center_x, gc.center_y, gc.screen_width,
++				gc.screen_height);
++			scale_x = gc.scale_x / 100.0f;
++			scale_y = gc.scale_y / 100.0f;
++			center_x = static_cast<float>(gc.center_x);
++			center_y = static_cast<float>(gc.center_y);
++			screen_width = gc.screen_width;
++			screen_height = gc.screen_height;
++			return;
++		}
++		log_cb(RETRO_LOG_WARN, "GunCon2: no settings for disc '%s', using defaults\n", DiscSerial);
++	}
++
++	void GunCon2State::CalculatePosition(s16* pos_x, s16* pos_y) const
++	{
++		if (!on_screen)
++		{
++			*pos_x = 0;
++			*pos_y = 0;
++			return;
++		}
++		/* Scale to the gun's coordinate system, around the game's centre. */
++		float fx = (pointer_x * static_cast<float>(screen_width)) - static_cast<float>(screen_width / 2u);
++		float fy = (pointer_y * static_cast<float>(screen_height)) - static_cast<float>(screen_height / 2u);
++		fx *= scale_x;
++		fy *= scale_y;
++		s32 x = static_cast<s32>(std::lround(fx + center_x));
++		s32 y = static_cast<s32>(std::lround(fy + center_y));
++		if (param_mode & GUNCON2_FLAG_PROGRESSIVE)
++		{
++			x -= param_x / 2;
++			y -= param_y / 2;
++		}
++		else
++		{
++			x -= param_x;
++			y -= param_y;
++		}
++		/* 0,0 means off screen. */
++		*pos_x = static_cast<s16>(x < 1 ? 1 : x);
++		*pos_y = static_cast<s16>(y < 1 ? 1 : y);
++	}
++
++	static void guncon2_handle_control(
++		USBDevice* dev, USBPacket* p, int request, int value, int index, int length, uint8_t* data)
++	{
++		GunCon2State* const us = USB_CONTAINER_OF(dev, GunCon2State, dev);
++
++		/* The game is loaded by the first control request: its serial picks the scales. */
++		if (!us->auto_config_done)
++		{
++			us->AutoConfigure();
++			us->auto_config_done = true;
++		}
++
++		if (usb_desc_handle_control(dev, p, request, value, index, length, data) >= 0)
++			return;
++
++		if (request == (ClassInterfaceOutRequest | 0x09))
++		{
++			us->param_x = static_cast<s16>(static_cast<u16>(data[0]) | (static_cast<u16>(data[1]) << 8));
++			us->param_y = static_cast<s16>(static_cast<u16>(data[2]) | (static_cast<u16>(data[3]) << 8));
++			us->param_mode = static_cast<u16>(data[4]) | (static_cast<u16>(data[5]) << 8);
++			return;
++		}
++
++		p->status = USB_RET_STALL;
++	}
++
++	static void guncon2_handle_data(USBDevice* dev, USBPacket* p)
++	{
++		GunCon2State* const us = USB_CONTAINER_OF(dev, GunCon2State, dev);
++
++		if (p->pid == USB_TOKEN_IN && p->ep->nr == 1)
++		{
++			s16 pos_x, pos_y;
++			us->CalculatePosition(&pos_x, &pos_y);
++
++			/* Time Crisis calibrates by showing one black frame and waiting for (0, 0): after
++			 * a recalibration request, hold the trigger and the position a few reports, then
++			 * report (0, 0). */
++			if ((us->button_state & (1u << BID_RECALIBRATE)) && us->calibration_timer == 0)
++			{
++				us->calibration_timer = GUNCON2_CALIBRATION_DELAY;
++				us->calibration_pos_x = pos_x;
++				us->calibration_pos_y = pos_y;
++			}
++
++			/* Buttons are active low. */
++			GunCon2Out out;
++			out.buttons = static_cast<u16>(~us->button_state) | (us->param_mode & GUNCON2_FLAG_PROGRESSIVE);
++			out.pos_x = pos_x;
++			out.pos_y = pos_y;
++
++			if (us->calibration_timer > 0)
++			{
++				out.buttons &= ~(1u << BID_TRIGGER);
++				out.pos_x = us->calibration_pos_x;
++				out.pos_y = us->calibration_pos_y;
++				us->calibration_timer--;
++				if (us->calibration_timer < GUNCON2_CALIBRATION_REPORT_DELAY)
++				{
++					out.pos_x = 0;
++					out.pos_y = 0;
++				}
++			}
++			else if (us->button_state & (1u << BID_SHOOT_OFFSCREEN))
++			{
++				/* Off-screen shot (reload in most games): trigger at (0, 0). */
++				out.buttons &= ~(1u << BID_TRIGGER);
++				out.pos_x = 0;
++				out.pos_y = 0;
++			}
++
++			usb_packet_copy(p, &out, sizeof(out));
++			return;
++		}
++
++		p->status = USB_RET_STALL;
++	}
++
++	static void guncon2_unrealize(USBDevice* dev)
++	{
++		GunCon2State* us = USB_CONTAINER_OF(dev, GunCon2State, dev);
++		delete us;
++	}
++
++	USBDevice* create(u32 port)
++	{
++		GunCon2State* s = new GunCon2State(port);
++		s->desc.full = &s->desc_dev;
++		s->desc.str = desc_strings;
++
++		if (usb_desc_parse_dev(guncon2_dev_desc, sizeof(guncon2_dev_desc), s->desc, s->desc_dev) < 0 ||
++			usb_desc_parse_config(guncon2_config_desc, sizeof(guncon2_config_desc), s->desc_dev) < 0)
++		{
++			guncon2_unrealize(&s->dev);
++			return nullptr;
++		}
++
++		s->dev.speed = USB_SPEED_FULL;
++		s->dev.klass.handle_attach = usb_desc_attach;
++		s->dev.klass.handle_control = guncon2_handle_control;
++		s->dev.klass.handle_data = guncon2_handle_data;
++		s->dev.klass.unrealize = guncon2_unrealize;
++		s->dev.klass.usb_desc = &s->desc;
++		s->dev.klass.product_desc = s->desc.str[1];
++
++		usb_desc_init(&s->dev);
++		usb_ep_init(&s->dev);
++		log_cb(RETRO_LOG_INFO, "GunCon2 on USB port %u\n", port + 1);
++		return &s->dev;
++	}
++
++	void update(USBDevice* dev, retro_input_state_t input_cb, unsigned port)
++	{
++		GunCon2State* s = USB_CONTAINER_OF(dev, GunCon2State, dev);
++		if (!input_cb)
++			return;
++		/* The scales follow the disc (also after loading a state, which keeps no scales). */
++		if (!s->auto_config_done && DiscSerial[0])
++		{
++			s->AutoConfigure();
++			s->auto_config_done = true;
++		}
++
++		/* Position: -0x7fff..0x7fff over the frontend's view of the game, to 0..1. */
++		const int x = input_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X);
++		const int y = input_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y);
++		s->on_screen = !input_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN);
++		s->pointer_x = (x + 0x7fff) / 65534.0f;
++		s->pointer_y = (y + 0x7fff) / 65534.0f;
++
++		static const struct { unsigned id; u32 bid; } binds[] = {
++			{RETRO_DEVICE_ID_LIGHTGUN_TRIGGER, BID_TRIGGER},
++			{RETRO_DEVICE_ID_LIGHTGUN_AUX_A, BID_A},
++			{RETRO_DEVICE_ID_LIGHTGUN_AUX_B, BID_B},
++			{RETRO_DEVICE_ID_LIGHTGUN_AUX_C, BID_C},
++			{RETRO_DEVICE_ID_LIGHTGUN_START, BID_START},
++			{RETRO_DEVICE_ID_LIGHTGUN_SELECT, BID_SELECT},
++			{RETRO_DEVICE_ID_LIGHTGUN_DPAD_UP, BID_DPAD_UP},
++			{RETRO_DEVICE_ID_LIGHTGUN_DPAD_DOWN, BID_DPAD_DOWN},
++			{RETRO_DEVICE_ID_LIGHTGUN_DPAD_LEFT, BID_DPAD_LEFT},
++			{RETRO_DEVICE_ID_LIGHTGUN_DPAD_RIGHT, BID_DPAD_RIGHT},
++			/* Reload: a shot that also reports (0, 0) a moment later, which is what Time Crisis
++			 * calibration waits for and what reloads in the other games. */
++			{RETRO_DEVICE_ID_LIGHTGUN_RELOAD, BID_RECALIBRATE},
++		};
++		u32 buttons = 0;
++		for (const auto& b : binds)
++			if (input_cb(port, RETRO_DEVICE_LIGHTGUN, 0, b.id))
++				buttons |= 1u << b.bid;
++		s->button_state = buttons;
++	}
++
++	void freeze(USBDevice* dev, UsbState& st)
++	{
++		GunCon2State* s = USB_CONTAINER_OF(dev, GunCon2State, dev);
++		st.Do(&s->param_x);
++		st.Do(&s->param_y);
++		st.Do(&s->param_mode);
++		st.Do(&s->calibration_timer);
++		st.Do(&s->calibration_pos_x);
++		st.Do(&s->calibration_pos_y);
++	}
++} // namespace usb_guncon2
+diff --git a/pcsx2/USB/libretro-usb/usb-guncon2.h b/pcsx2/USB/libretro-usb/usb-guncon2.h
+new file mode 100644
+index 0000000..3c4589c
+--- /dev/null
++++ b/pcsx2/USB/libretro-usb/usb-guncon2.h
+@@ -0,0 +1,29 @@
++/*  PCSX2 - PS2 Emulator for PCs
++ *  Copyright (C) 2002-2026  PCSX2 Dev Team
++ *
++ *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
++ *  of the GNU Lesser General Public License as published by the Free Software Found-
++ *  ation, either version 3 of the License, or (at your option) any later version.
++ *
++ *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
++ *  PURPOSE.  See the GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License along with PCSX2.
++ *  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "USB/libretro-usb/usb-state.h"
++#include "libretro.h"
++
++/* Namco GunCon 2, the PS2's USB light gun (Time Crisis 2/3, Vampire Night...), ported from
++ * PCSX2's usb-lightgun/guncon2.cpp. The frontend's RETRO_DEVICE_LIGHTGUN drives it. */
++namespace usb_guncon2
++{
++	USBDevice* create(u32 port);
++	/* Reads one frame of libretro light gun input (screen position, trigger, A/B/C, start, select). */
++	void update(USBDevice* dev, retro_input_state_t input_cb, unsigned port);
++	void freeze(USBDevice* dev, UsbState& st);
++} // namespace usb_guncon2

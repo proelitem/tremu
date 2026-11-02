@@ -1,0 +1,435 @@
+diff --git a/GLideN64/src/FrameBuffer.cpp b/GLideN64/src/FrameBuffer.cpp
+index 68cf2bf..d547679 100644
+--- a/GLideN64/src/FrameBuffer.cpp
++++ b/GLideN64/src/FrameBuffer.cpp
+@@ -46,6 +46,11 @@ FrameBuffer::FrameBuffer()
+ 
+ FrameBuffer::~FrameBuffer()
+ {
++	if (m_pStereoTexture != nullptr) {
++		gfxContext.stereoRemoveTwin(m_FBO);
++		gfxContext.deleteFramebuffer(m_stereoFBO);
++		textureCache().removeFrameBufferTexture(m_pStereoTexture);
++	}
+ 	gfxContext.deleteFramebuffer(m_FBO);
+ 	gfxContext.deleteFramebuffer(m_depthFBO);
+ 	gfxContext.deleteFramebuffer(m_resolveFBO);
+@@ -183,6 +188,37 @@ void FrameBuffer::init(u32 _address, u16 _format, u16 _size, u16 _width, bool _c
+ 	} else
+ 		_setAndAttachTexture(m_FBO, m_pTexture, 0, false);
+ 
++	/* The scene's buffers get a twin for the right eye; all twins share one depth buffer. */
++	if (!isAuxiliary() && config.video.multisampling == 0 && m_pStereoTexture == nullptr) {
++		static ObjectHandle depth;
++		static u32 depthWidth = 0, depthHeight = 0;
++		if (depthWidth != m_pTexture->width || depthHeight != m_pTexture->height) {
++			depth = gfxContext.createRenderbuffer();
++			Context::InitRenderbufferParams params;
++			params.handle = depth;
++			params.target = textureTarget::RENDERBUFFER;
++			params.format = gfxContext.getFramebufferTextureFormats().depthInternalFormat;
++			params.width = m_pTexture->width;
++			params.height = m_pTexture->height;
++			gfxContext.initRenderbuffer(params);
++			depthWidth = m_pTexture->width;
++			depthHeight = m_pTexture->height;
++		}
++		m_pStereoTexture = textureCache().addFrameBufferTexture(textureTarget::TEXTURE_2D);
++		_initTexture(_width, maxHeight, _format, _size, m_pStereoTexture);
++		m_stereoFBO = gfxContext.createFramebuffer();
++		_setAndAttachTexture(m_stereoFBO, m_pStereoTexture, 0, false);
++		Context::FrameBufferRenderTarget target;
++		target.bufferHandle = m_stereoFBO;
++		target.bufferTarget = bufferTarget::FRAMEBUFFER;
++		target.attachment = bufferAttachment::DEPTH_ATTACHMENT;
++		target.textureHandle = depth;
++		target.textureTarget = textureTarget::RENDERBUFFER;
++		gfxContext.addFrameBufferRenderTarget(target);
++		gfxContext.bindFramebuffer(bufferTarget::FRAMEBUFFER, m_FBO);
++		gfxContext.stereoAddTwin(m_FBO, m_stereoFBO);
++	}
++
+ //	gfxContext.clearColorBuffer(0.0f, 0.0f, 0.0f, 0.0f);
+ }
+ 
+@@ -1484,6 +1520,7 @@ void FrameBufferList::renderBuffer()
+ 		return;
+ 	}
+ 
++	gfxContext.stereoEndFrame();
+ 	FrameBuffer *pBuffer = findBuffer(rdpRes.vi_origin);
+ 	if (pBuffer == nullptr)
+ 		return;
+@@ -1594,6 +1631,11 @@ void FrameBufferList::renderBuffer()
+ 	}
+ 
+ 	m_overscan.activate();
++	/* The eyes side by side in the frontend's framebuffer, each the size of the usual picture. */
++	const bool stereo = Context::StereoOn && pBuffer->m_pStereoTexture != nullptr && config.frameBufferEmulation.enableOverscan == 0;
++	const s32 eyeWidth = static_cast<s32>(m_overscan.getBufferWidth());
++	if (stereo)
++		gfxContext.setScissor(0, 0, 2 * eyeWidth, static_cast<s32>(m_overscan.getBufferHeight()));
+ 	gfxContext.clearColorBuffer(0.0f, 0.0f, 0.0f, 0.0f);
+ #if defined(OS_WINDOWS)
+ 	gfxContext.clearDepthBuffer();
+@@ -1615,6 +1657,8 @@ void FrameBufferList::renderBuffer()
+ 	blitParams.mask = blitMask::COLOR_BUFFER;
+ 	blitParams.tex[0] = pBufferTexture;
+ 	const bool downscale = blitParams.srcWidth >= blitParams.dstWidth || blitParams.srcHeight >= blitParams.dstHeight;
++	if (stereo)
++		blitParams.dstWidth = 2 * eyeWidth;
+ 	blitParams.filter = downscale || config.generalEmulation.enableHybridFilter > 0 ?
+ 		textureParameters::FILTER_LINEAR :
+ 		textureParameters::FILTER_NEAREST; //upscale; hybridFilter disabled
+@@ -1633,6 +1677,15 @@ void FrameBufferList::renderBuffer()
+ 
+ 	drawer.copyTexturedRect(blitParams);
+ 
++	if (stereo) {
++		GraphicsDrawer::BlitOrCopyRectParams rightEye = blitParams;
++		rightEye.dstX0 += eyeWidth;
++		rightEye.dstX1 += eyeWidth;
++		rightEye.tex[0] = pBuffer->m_pStereoTexture;
++		rightEye.readBuffer = pBuffer->m_stereoFBO;
++		drawer.copyTexturedRect(rightEye);
++	}
++
+ 	if (pNextBuffer != nullptr) {
+ 		pNextBuffer->m_isMainBuffer = true;
+ 		pFilteredBuffer = pNextBuffer;
+diff --git a/GLideN64/src/FrameBuffer.h b/GLideN64/src/FrameBuffer.h
+index 6e06dae..56c3eec 100644
+--- a/GLideN64/src/FrameBuffer.h
++++ b/GLideN64/src/FrameBuffer.h
+@@ -67,6 +67,9 @@ struct FrameBuffer
+ 
+ 	graphics::ObjectHandle m_FBO;
+ 	CachedTexture *m_pTexture = nullptr;
++	/* The right eye of this buffer (WFGEmu stereo), see Context::StereoOn. */
++	graphics::ObjectHandle m_stereoFBO;
++	CachedTexture *m_pStereoTexture = nullptr;
+ 
+ 	graphics::ObjectHandle m_depthFBO;
+ 	CachedTexture *m_pDepthTexture = nullptr;
+diff --git a/GLideN64/src/Graphics/Context.cpp b/GLideN64/src/Graphics/Context.cpp
+index 9d268e9..2d08382 100644
+--- a/GLideN64/src/Graphics/Context.cpp
++++ b/GLideN64/src/Graphics/Context.cpp
+@@ -1,5 +1,10 @@
+ #include "Context.h"
+ #include "OpenGLContext/opengl_ContextImpl.h"
++#include "gSP.h"
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++#include <vector>
+ 
+ using namespace graphics;
+ 
+@@ -19,6 +24,87 @@ bool Context::EglImage = false;
+ bool Context::EglImageFramebuffer = false;
+ bool Context::DualSourceBlending = false;
+ 
++bool Context::StereoOn = false;
++f32 Context::StereoSeparation = 0.0f;
++
++extern "C" void wfg_stereo_update(int _on, float _separation)
++{
++	Context::StereoOn = _on != 0;
++	Context::StereoSeparation = _separation;
++}
++
++namespace {
++	struct StereoTwin { ObjectHandle main, twin; };
++	std::vector<StereoTwin> stereoTwins;
++	ObjectHandle stereoDrawFbo, stereoDrawTwin;
++	/* The distance where the eyes agree (the screen plane): a low percentile of the vertices' w,
++	 * in the game's own units, found per frame in a log2 histogram and eased. */
++	const u32 stereoBins = 32;
++	u32 stereoHistogram[stereoBins];
++	f32 stereoLogConvergence = -1.0f, stereoConvergence = 0.0f;
++	std::vector<f32> stereoSavedX;
++
++	void stereoTrack(ObjectHandle _fbo)
++	{
++		stereoDrawFbo = _fbo;
++		stereoDrawTwin = ObjectHandle::null;
++		for (const StereoTwin & t : stereoTwins)
++			if (t.main == _fbo)
++				stereoDrawTwin = t.twin;
++	}
++
++	bool stereoFlat(const SPVertex & _v)
++	{
++		/* Screen-space vertices, and orthographic ones (2D drawn as triangles). */
++		return (_v.modify & MODIFY_XY) != 0 || std::fabs(_v.w - 1.0f) < 0.001f || _v.w <= 0.0f;
++	}
++
++	void stereoShift(SPVertex * _v, u32 _count, f32 _eye)
++	{
++		for (u32 i = 0; i < _count; ++i) {
++			if (stereoFlat(_v[i]))
++				continue;
++			/* Nothing comes nearer than half the plane's distance, to stay comfortable. */
++			const f32 near = std::min(stereoConvergence, 2.0f * _v[i].w);
++			_v[i].x += _eye * Context::StereoSeparation * (_v[i].w - near);
++		}
++	}
++}
++
++void Context::stereoAddTwin(ObjectHandle _main, ObjectHandle _twin)
++{
++	stereoTwins.push_back({ _main, _twin });
++	if (_main == stereoDrawFbo)
++		stereoDrawTwin = _twin;
++}
++
++void Context::stereoRemoveTwin(ObjectHandle _main)
++{
++	for (size_t i = 0; i < stereoTwins.size(); ++i)
++		if (stereoTwins[i].main == _main) {
++			stereoTwins.erase(stereoTwins.begin() + i);
++			break;
++		}
++	if (_main == stereoDrawFbo)
++		stereoDrawTwin = ObjectHandle::null;
++}
++
++void Context::stereoEndFrame()
++{
++	u32 total = 0;
++	for (u32 i = 0; i < stereoBins; ++i)
++		total += stereoHistogram[i];
++	if (total == 0)
++		return;
++	u32 seen = 0, bin = 0;
++	while (bin < stereoBins - 1 && (seen += stereoHistogram[bin]) * 5 < total)
++		++bin;
++	memset(stereoHistogram, 0, sizeof stereoHistogram);
++	const f32 target = static_cast<f32>(bin) + 0.5f;
++	stereoLogConvergence = stereoLogConvergence < 0.0f ? target : stereoLogConvergence + (target - stereoLogConvergence) * 0.05f;
++	stereoConvergence = std::pow(2.0f, stereoLogConvergence);
++}
++
+ Context::Context() {}
+ 
+ Context::~Context() {
+@@ -115,11 +201,22 @@ void Context::setBlendColor(f32 _red, f32 _green, f32 _blue, f32 _alpha)
+ void Context::clearColorBuffer(f32 _red, f32 _green, f32 _blue, f32 _alpha)
+ {
+ 	m_impl->clearColorBuffer(_red, _green, _blue, _alpha);
++	if (StereoOn && stereoDrawTwin.isNotNull()) {
++		m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoDrawTwin);
++		m_impl->clearColorBuffer(_red, _green, _blue, _alpha);
++		m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoDrawFbo);
++	}
+ }
+ 
+ void Context::clearDepthBuffer()
+ {
+ 	m_impl->clearDepthBuffer();
++	/* The twins share one depth buffer, so any of them clears it, whatever is being drawn. */
++	if (StereoOn && !stereoTwins.empty()) {
++		m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoTwins[0].twin);
++		m_impl->clearDepthBuffer();
++		m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoDrawFbo);
++	}
+ }
+ 
+ void Context::setPolygonOffset(f32 _factor, f32 _units)
+@@ -212,6 +309,8 @@ void Context::deleteFramebuffer(ObjectHandle _name)
+ void Context::bindFramebuffer(BufferTargetParam _target, ObjectHandle _name)
+ {
+ 	m_impl->bindFramebuffer(_target, _name);
++	if (_target != bufferTarget::READ_FRAMEBUFFER)
++		stereoTrack(_name);
+ }
+ 
+ ObjectHandle Context::createRenderbuffer()
+@@ -227,6 +326,8 @@ void Context::initRenderbuffer(const InitRenderbufferParams & _params)
+ void Context::addFrameBufferRenderTarget(const FrameBufferRenderTarget & _params)
+ {
+ 	m_impl->addFrameBufferRenderTarget(_params);
++	if (_params.bufferTarget != bufferTarget::READ_FRAMEBUFFER)
++		stereoTrack(_params.bufferHandle);
+ }
+ 
+ bool Context::blitFramebuffers(const BlitFramebuffersParams & _params)
+@@ -334,17 +435,60 @@ void Context::resetShaderProgram()
+ 
+ void Context::drawTriangles(const DrawTriangleParameters & _params)
+ {
++	if (!StereoOn || !stereoDrawTwin.isNotNull() || _params.vertices == nullptr) {
++		m_impl->drawTriangles(_params);
++		return;
++	}
++	SPVertex * v = _params.vertices;
++	const u32 n = _params.verticesCount;
++	stereoSavedX.resize(n);
++	for (u32 i = 0; i < n; ++i) {
++		stereoSavedX[i] = v[i].x;
++		if (!stereoFlat(v[i])) {
++			int exponent = 0;
++			std::frexp(v[i].w, &exponent);
++			++stereoHistogram[exponent < 0 ? 0 : exponent >= static_cast<int>(stereoBins) ? stereoBins - 1 : exponent];
++		}
++	}
++	stereoShift(v, n, -1.0f);
+ 	m_impl->drawTriangles(_params);
++	for (u32 i = 0; i < n; ++i)
++		v[i].x = stereoSavedX[i];
++	stereoShift(v, n, 1.0f);
++	m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoDrawTwin);
++	m_impl->drawTriangles(_params);
++	m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoDrawFbo);
++	for (u32 i = 0; i < n; ++i)
++		v[i].x = stereoSavedX[i];
+ }
+ 
+ void Context::drawRects(const DrawRectParameters & _params)
+ {
+ 	m_impl->drawRects(_params);
++	if (StereoOn && stereoDrawTwin.isNotNull()) {
++		m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoDrawTwin);
++		m_impl->drawRects(_params);
++		m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoDrawFbo);
++	}
+ }
+ 
+ void Context::drawLine(f32 _width, SPVertex * _vertices)
+ {
++	if (!StereoOn || !stereoDrawTwin.isNotNull()) {
++		m_impl->drawLine(_width, _vertices);
++		return;
++	}
++	const f32 x0 = _vertices[0].x, x1 = _vertices[1].x;
++	stereoShift(_vertices, 2, -1.0f);
++	m_impl->drawLine(_width, _vertices);
++	_vertices[0].x = x0;
++	_vertices[1].x = x1;
++	stereoShift(_vertices, 2, 1.0f);
++	m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoDrawTwin);
+ 	m_impl->drawLine(_width, _vertices);
++	m_impl->bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, stereoDrawFbo);
++	_vertices[0].x = x0;
++	_vertices[1].x = x1;
+ }
+ 
+ f32 Context::getMaxLineWidth()
+diff --git a/GLideN64/src/Graphics/Context.h b/GLideN64/src/Graphics/Context.h
+index 2041bac..b8e917f 100644
+--- a/GLideN64/src/Graphics/Context.h
++++ b/GLideN64/src/Graphics/Context.h
+@@ -168,6 +168,16 @@ namespace graphics {
+ 
+ 		void textureBarrier();
+ 
++		/*---------------Stereo (WFGEmu)-------------*/
++
++		/* While on, every draw into a framebuffer that has a twin is drawn again into the twin,
++		 * the right eye. Triangles move apart by depth; rectangles (HUD, backgrounds) stay flat. */
++		static bool StereoOn;
++		static f32 StereoSeparation;
++		void stereoAddTwin(ObjectHandle _main, ObjectHandle _twin);
++		void stereoRemoveTwin(ObjectHandle _main);
++		void stereoEndFrame();
++
+ 		/*---------------Framebuffer-------------*/
+ 
+ 		const FramebufferTextureFormats & getFramebufferTextureFormats();
+diff --git a/libretro/jni/Android.mk b/libretro/jni/Android.mk
+index 55b847a..f8adbcf 100644
+--- a/libretro/jni/Android.mk
++++ b/libretro/jni/Android.mk
+@@ -72,10 +72,7 @@ ifeq ($(HAVE_PARALLEL_RSP), 1)
+    COREFLAGS += -DHAVE_MMAP=1
+ endif
+ 
+-GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"
+-ifneq ($(GIT_VERSION)," unknown")
+-  COREFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
+-endif
++# No GIT_VERSION: its quotes send every command through cmd.exe on Windows, which cannot run clang++.
+ 
+ include $(CLEAR_VARS)
+ 
+@@ -99,6 +96,8 @@ include $(BUILD_SHARED_LIBRARY)
+ # Use the core's NDK-compiled object so offsets match its ABI and flags.
+ ASM_DEFINES_OBJ := $(LOCAL_OBJS_DIR)/$(call get-object-name,$(CORE_DIR)/src/asm_defines/asm_defines.c)
+ 
++# Windows: this recipe needs a POSIX shell, not cmd.exe.
++$(ASM_DEFINES_NASM): private SHELL := C:/PROGRA~1/Git/usr/bin/bash.exe
+ $(ASM_DEFINES_NASM): $(ASM_DEFINES_OBJ) $(CORE_DIR)/tools/gen_asm_defines.awk
+ 	@mkdir -p $(dir $@)
+ 	$(STRINGS) "$<" | $(TR) -d '\r' | $(AWK) \
+diff --git a/libretro/libretro.c b/libretro/libretro.c
+index 4a9f129..cb8c7be 100644
+--- a/libretro/libretro.c
++++ b/libretro/libretro.c
+@@ -108,6 +108,26 @@ retro_input_poll_t poll_cb = NULL;
+ retro_input_state_t input_cb = NULL;
+ retro_audio_sample_batch_t audio_batch_cb = NULL;
+ retro_environment_t environ_cb = NULL;
++#ifndef GIT_VERSION
++#define GIT_VERSION ""
++#endif
++
++/* WFGEmu stereo: the frontend sets the strength and says whether it shows two eyes. The same
++ * environment calls as our LRPS2 (newer libretro.h). */
++#define WFG_ENV_SET_VIDEO_VIEWS (95 | RETRO_ENVIRONMENT_EXPERIMENTAL)
++#define WFG_ENV_GET_VIDEO_VIEWS_STATUS (96 | RETRO_ENVIRONMENT_EXPERIMENTAL)
++#define WFG_VIEWS_PRESENTS_AND_STEREO 3
++struct wfg_video_view { unsigned x, y, width, height, screen, eye; float aspect_ratio; };
++struct wfg_video_views {
++   const struct wfg_video_view *views;
++   unsigned num_views, flags;
++   int reference_space;
++   unsigned recommended_view_width, recommended_view_height;
++};
++extern void wfg_stereo_update(int on, float separation);
++static int wfg_stereo_percent;
++static bool wfg_stereo_active;
++void retro_wfg_set_stereo(int percent) { wfg_stereo_percent = percent; }
+ retro_environment_t environ_clear_thread_waits_cb = NULL;
+ 
+ struct retro_rumble_interface rumble;
+@@ -664,7 +684,8 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
+ {
+     info->geometry.base_width   = retro_screen_width;
+     info->geometry.base_height  = retro_screen_height;
+-    info->geometry.max_width    = retro_screen_width;
++    /* Room for the two eyes side by side (WFGEmu stereo), which the menu can turn on in a game. */
++    info->geometry.max_width    = retro_screen_width * (current_rdp_type == RDP_PLUGIN_GLIDEN64 ? 2 : 1);
+     info->geometry.max_height   = retro_screen_height;
+     info->geometry.aspect_ratio = retro_screen_aspect;
+ #ifdef HAVE_PARALLEL_RDP
+@@ -2052,6 +2073,20 @@ void retro_run (void)
+ 
+     if(current_rdp_type == RDP_PLUGIN_GLIDEN64)
+     {
++       unsigned status = 0;
++       bool active = wfg_stereo_percent > 0 && environ_cb(WFG_ENV_GET_VIDEO_VIEWS_STATUS, &status) &&
++                     (status & WFG_VIEWS_PRESENTS_AND_STEREO) == WFG_VIEWS_PRESENTS_AND_STEREO;
++       if (active != wfg_stereo_active)
++       {
++          struct wfg_video_view views[2] = {
++             {0, 0, retro_screen_width, retro_screen_height, 0, 1, retro_screen_aspect},
++             {retro_screen_width, 0, retro_screen_width, retro_screen_height, 0, 2, retro_screen_aspect}};
++          struct wfg_video_views map = {active ? views : NULL, active ? 2u : 0u, 0, 0, 0, 0};
++          environ_cb(WFG_ENV_SET_VIDEO_VIEWS, &map);
++          wfg_stereo_active = active;
++       }
++       wfg_stereo_update(active, 0.03f * wfg_stereo_percent / 100.0f);
++
+        if(EnableThreadedRenderer)
+        {
+           if(!emuThreadRunning)
+@@ -2075,7 +2110,7 @@ void retro_run (void)
+     {
+        if(current_rdp_type == RDP_PLUGIN_GLIDEN64)
+        {
+-          video_cb(RETRO_HW_FRAME_BUFFER_VALID, retro_screen_width, retro_screen_height, 0);
++          video_cb(RETRO_HW_FRAME_BUFFER_VALID, retro_screen_width * (wfg_stereo_active ? 2 : 1), retro_screen_height, 0);
+        }
+ #ifdef HAVE_THR_AL
+        else if(current_rdp_type == RDP_PLUGIN_ANGRYLION)
