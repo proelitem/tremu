@@ -15,15 +15,18 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "Tremu-net", __VA_ARGS__)
 
-/* Input delay bounds (frames), frames repeated in every input packet, ring size. */
-enum { DELAY_DEFAULT = 2, DELAY_MAX = 8, REDUNDANT = 10, RING = 256, CHUNK = 1024, CRC_EVERY = 60, CRC_HISTORY = 8 };
+/* Input delay bounds (frames), frames repeated in every input packet, ring size. A chunk and
+ * its 12-byte header fit one Wi-Fi frame (MTU 1500 less the UDP/IP headers). */
+enum { DELAY_DEFAULT = 2, DELAY_MAX = 8, REDUNDANT = 10, RING = 256, CHUNK = 1400, CRC_EVERY = 60, CRC_HISTORY = 8 };
 static const uint64_t MS = 1000000ull;
 
-/* Protocol 2: up to four players around the host (see netplay.h). */
-enum { PROTOCOL = 3 };
+/* Protocol 2: up to four players around the host (see netplay.h). 4: the game state travels
+ * compressed, in 1400-byte chunks. */
+enum { PROTOCOL = 4 };
 enum { T_ANNOUNCE = 1, T_HELLO, T_WELCOME, T_CHUNK, T_MISSING, T_READY, T_INPUT, T_BYE, T_QUERY, T_INFO, T_FRAMES };
 enum { REFUSE_NONE, REFUSE_ROM, REFUSE_NO_STATE, REFUSE_BUSY, REFUSE_WAIT };
 
@@ -82,13 +85,20 @@ static uint32_t host_crc_frames[CRC_HISTORY], host_crcs[CRC_HISTORY];
 static int my_slot;
 static atomic_bool host_busy;
 
-/* Game state transfer, host → one guest. The host paces its sends (a 700-packet burst overflows
- * Wi-Fi receive buffers); the guest asks again for what is missing. */
-enum { CHUNKS_PER_STEP = 4 };
+/* Game state transfer, host → one guest. The state goes compressed (zlib, fastest level: a
+ * PS2 or Dreamcast state of tens of megabytes shrinks three to five times, and the few hundred
+ * kilobytes of an arcade state cost nothing). The host paces its sends (a 700-packet burst
+ * overflows Wi-Fi receive buffers); the guest asks again for what is missing. state_buf holds
+ * the compressed bytes (packed_size of them) on both sides; state_size is the core's own size. */
+enum { CHUNKS_PER_STEP = 8 };
 static uint8_t *state_buf, *chunk_have;
-static size_t state_size;
+static size_t state_size, packed_size;
 static uint32_t chunk_count, chunks_received, send_cursor, missing_requests, transfer_frame;
 static uint64_t last_progress_log_ns;
+
+/* A transfer may take 30 s plus a second per megabyte on the wire: a big state on a slow Wi-Fi
+ * is slow, not dead. */
+static uint64_t transfer_timeout_ns(void) { return 30000 * MS + (uint64_t)packed_size * 1000; }
 
 /* Sync checks: CRC of the game RAM every CRC_EVERY frames. */
 static uint32_t local_crc_frame, local_crc;
@@ -225,7 +235,8 @@ static void free_transfer(void) {
     free(state_buf);
     free(chunk_have);
     state_buf = chunk_have = NULL;
-    state_size = chunk_count = chunks_received = send_cursor = missing_requests = 0;
+    state_size = packed_size = 0;
+    chunk_count = chunks_received = send_cursor = missing_requests = 0;
 }
 
 /* The lockstep (re)starts at frame start: frames start .. start+d-1 of a gun are neutral. */
@@ -378,9 +389,10 @@ void netplay_dismiss_failure(void) {
     atomic_compare_exchange_strong(&state, &failed, NET_OFF);
 }
 
-/* WELCOME: refusal, the guest's slot, resync flag, state size, chunks and the frame it starts at. */
+/* WELCOME: refusal, the guest's slot, resync flag, state size, chunks, the frame it starts at
+ * and the compressed size. */
 static void send_welcome_to(const struct sockaddr_in *to, int refuse, int slot) {
-    uint8_t p[20] = {0};
+    uint8_t p[24] = {0};
     header(p, T_WELCOME);
     p[4] = (uint8_t)refuse;
     p[5] = (uint8_t)slot;
@@ -388,12 +400,13 @@ static void send_welcome_to(const struct sockaddr_in *to, int refuse, int slot) 
     put32(p + 8, (uint32_t)state_size);
     put32(p + 12, chunk_count);
     put32(p + 16, transfer_frame);
+    put32(p + 20, (uint32_t)packed_size);
     send_to(to, p, sizeof p);
 }
 
 static void send_chunk(uint32_t i) {
     uint8_t p[12 + CHUNK];
-    size_t off = (size_t)i * CHUNK, len = state_size - off < CHUNK ? state_size - off : CHUNK;
+    size_t off = (size_t)i * CHUNK, len = packed_size - off < CHUNK ? packed_size - off : CHUNK;
     header(p, T_CHUNK);
     put32(p + 4, i);
     put32(p + 8, (uint32_t)len);
@@ -405,13 +418,25 @@ static void send_chunk(uint32_t i) {
  * party waits meanwhile (the host runs no frame until that guest is ready). */
 static bool start_sending(int slot) {
     free_transfer();
+    uint64_t t0 = now_ns();
     state_size = wg_core_state_size();
-    state_buf = state_size ? malloc(state_size) : NULL;
-    if (!state_buf || !wg_core_save_state(state_buf, state_size)) {
+    uint8_t *raw = state_size ? malloc(state_size) : NULL;
+    if (!raw || !wg_core_save_state(raw, state_size)) {
+        free(raw);
         free_transfer();
         return false;
     }
-    chunk_count = (uint32_t)((state_size + CHUNK - 1) / CHUNK);
+    uLongf packed = compressBound((uLong)state_size);
+    state_buf = malloc(packed);
+    if (!state_buf || compress2(state_buf, &packed, raw, (uLong)state_size, Z_BEST_SPEED) != Z_OK) {
+        free(raw);
+        free_transfer();
+        return false;
+    }
+    free(raw);
+    packed_size = packed;
+    LOG("state %zu bytes packed to %zu in %llu ms", state_size, packed_size, (unsigned long long)((now_ns() - t0) / MS));
+    chunk_count = (uint32_t)((packed_size + CHUNK - 1) / CHUNK);
     transfer_frame = frame;
     sending_slot = slot;
     peer = guests[slot].addr;
@@ -513,9 +538,14 @@ static bool start_receiving(const uint8_t *p) {
     state_size = get32(p + 8);
     chunk_count = get32(p + 12);
     transfer_frame = get32(p + 16);
-    state_buf = malloc(state_size);
+    packed_size = get32(p + 20);
+    state_buf = malloc(packed_size);
     chunk_have = calloc(chunk_count, 1);
-    if (!state_buf || !chunk_have || my_slot < 1 || my_slot >= NET_MAX_PLAYERS) { fail(T("M\xC3\xA9moire insuffisante")); return false; }
+    if (!state_buf || !chunk_have || !state_size || my_slot < 1 || my_slot >= NET_MAX_PLAYERS ||
+        chunk_count != (packed_size + CHUNK - 1) / CHUNK) {
+        fail(T("M\xC3\xA9moire insuffisante"));
+        return false;
+    }
     started_ns = now_ns();
     atomic_store(&state, NET_RECEIVING);
     return true;
@@ -561,7 +591,7 @@ static void receive(void) {
             }
             break;
         case T_WELCOME:
-            if (!from_host || n < 20) break;
+            if (!from_host || n < 24) break;
             if (p[4] == REFUSE_NONE && p[6] && (st == NET_PLAYING || st == NET_STALLED)) {
                 if (start_receiving(p)) {
                     atomic_fetch_add(&resyncs, 1);
@@ -585,13 +615,13 @@ static void receive(void) {
                 delay = frames < DELAY_DEFAULT ? DELAY_DEFAULT : frames > DELAY_MAX ? DELAY_MAX : frames;
                 LOG("player %d, round trip %llu ms, input delay %d frames", my_slot + 1, (unsigned long long)(rtt / MS), delay);
             }
-            LOG("welcome: %zu bytes in %u chunks, from frame %u", state_size, chunk_count, transfer_frame);
+            LOG("welcome: %zu bytes (%zu packed) in %u chunks, from frame %u", state_size, packed_size, chunk_count, transfer_frame);
             break;
         case T_CHUNK: {
             if (st != NET_RECEIVING || !from_host || n < 12) break;
             uint32_t i = get32(p + 4), len = get32(p + 8);
             size_t off = (size_t)i * CHUNK;
-            if (i >= chunk_count || chunk_have[i] || off + len > state_size || 12 + len > (uint32_t)n) break;
+            if (i >= chunk_count || chunk_have[i] || off + len > packed_size || 12 + len > (uint32_t)n) break;
             memcpy(state_buf + off, p + 12, len);
             chunk_have[i] = 1;
             chunks_received++;
@@ -820,7 +850,7 @@ bool netplay_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS]) {
             LOG("sending: cursor %u/%u, %u resend requests", send_cursor, chunk_count, missing_requests);
             last_progress_log_ns = now;
         }
-        if (now - started_ns > 30000 * MS) {
+        if (now - started_ns > transfer_timeout_ns()) {
             LOG("transfer timed out");
             drop_guest(sending_slot, "transfer timed out");
         }
@@ -842,7 +872,7 @@ bool netplay_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS]) {
             LOG("receiving: %u/%u chunks", chunks_received, chunk_count);
             last_progress_log_ns = now;
         }
-        if (now - started_ns > 30000 * MS) {
+        if (now - started_ns > transfer_timeout_ns()) {
             LOG("transfer stopped at %u/%u chunks", chunks_received, chunk_count);
             fail(T("Transfert de la partie interrompu"));
             return false;
@@ -852,7 +882,15 @@ bool netplay_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS]) {
             if (now - last_send_ns > 300 * MS) request_missing();
             return false;
         }
-        if (!wg_core_load_state(state_buf, state_size)) { fail(T("\xC3\x89tat de partie incompatible")); return false; }
+        {
+            uint8_t *raw = malloc(state_size);
+            uLongf unpacked = (uLongf)state_size;
+            bool ok = raw && uncompress(raw, &unpacked, state_buf, (uLong)packed_size) == Z_OK && unpacked == state_size;
+            if (!ok) LOG("state unpack failed (%zu packed, %zu expected)", packed_size, state_size);
+            ok = ok && wg_core_load_state(raw, state_size);
+            free(raw);
+            if (!ok) { fail(T("\xC3\x89tat de partie incompatible")); return false; }
+        }
         free_transfer();
         frame = transfer_frame;
         memset(local_tag, 0, sizeof local_tag);
