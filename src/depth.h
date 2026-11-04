@@ -7,11 +7,11 @@
  * frames behind the game; the voxel view uses it as a continuous depth. */
 
 /* Loads TensorFlow Lite and the model file (on the worker thread); false if a library is missing. */
-bool wfg_depth_start(const char *model_path);
-void wfg_depth_stop(void);
+bool tremu_depth_start(const char *model_path);
+void tremu_depth_stop(void);
 /* Hands over the newest frame (RGBA, bottom row first); skipped while the network is busy. */
-void wfg_depth_submit(const uint32_t *pixels, unsigned w, unsigned h);
+void tremu_depth_submit(const uint32_t *pixels, unsigned w, unsigned h);
 /* Latest depth resized to w x h (bottom row first, 0 far .. 255 near); false before the first. */
-bool wfg_depth_get(uint8_t *out, unsigned w, unsigned h);
+bool tremu_depth_get(uint8_t *out, unsigned w, unsigned h);
 /* Milliseconds of the last inference, 0 if none (for the log and the menu). */
-float wfg_depth_ms(void);
+float tremu_depth_ms(void);

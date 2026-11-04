@@ -98,21 +98,21 @@ index 68cf2bf..d547679 100644
  		pNextBuffer->m_isMainBuffer = true;
  		pFilteredBuffer = pNextBuffer;
 diff --git a/GLideN64/src/FrameBuffer.h b/GLideN64/src/FrameBuffer.h
-index 6e06dae..56c3eec 100644
+index 6e06dae..5711495 100644
 --- a/GLideN64/src/FrameBuffer.h
 +++ b/GLideN64/src/FrameBuffer.h
 @@ -67,6 +67,9 @@ struct FrameBuffer
  
  	graphics::ObjectHandle m_FBO;
  	CachedTexture *m_pTexture = nullptr;
-+	/* The right eye of this buffer (WFGEmu stereo), see Context::StereoOn. */
++	/* The right eye of this buffer (Tremu stereo), see Context::StereoOn. */
 +	graphics::ObjectHandle m_stereoFBO;
 +	CachedTexture *m_pStereoTexture = nullptr;
  
  	graphics::ObjectHandle m_depthFBO;
  	CachedTexture *m_pDepthTexture = nullptr;
 diff --git a/GLideN64/src/Graphics/Context.cpp b/GLideN64/src/Graphics/Context.cpp
-index 9d268e9..2d08382 100644
+index 9d268e9..24f3e2c 100644
 --- a/GLideN64/src/Graphics/Context.cpp
 +++ b/GLideN64/src/Graphics/Context.cpp
 @@ -1,5 +1,10 @@
@@ -133,7 +133,7 @@ index 9d268e9..2d08382 100644
 +bool Context::StereoOn = false;
 +f32 Context::StereoSeparation = 0.0f;
 +
-+extern "C" void wfg_stereo_update(int _on, float _separation)
++extern "C" void tremu_stereo_update(int _on, float _separation)
 +{
 +	Context::StereoOn = _on != 0;
 +	Context::StereoSeparation = _separation;
@@ -317,14 +317,14 @@ index 9d268e9..2d08382 100644
  
  f32 Context::getMaxLineWidth()
 diff --git a/GLideN64/src/Graphics/Context.h b/GLideN64/src/Graphics/Context.h
-index 2041bac..b8e917f 100644
+index 2041bac..06b075f 100644
 --- a/GLideN64/src/Graphics/Context.h
 +++ b/GLideN64/src/Graphics/Context.h
 @@ -168,6 +168,16 @@ namespace graphics {
  
  		void textureBarrier();
  
-+		/*---------------Stereo (WFGEmu)-------------*/
++		/*---------------Stereo (Tremu)-------------*/
 +
 +		/* While on, every draw into a framebuffer that has a twin is drawn again into the twin,
 +		 * the right eye. Triangles move apart by depth; rectangles (HUD, backgrounds) stay flat. */
@@ -363,7 +363,7 @@ index 55b847a..f8adbcf 100644
  	@mkdir -p $(dir $@)
  	$(STRINGS) "$<" | $(TR) -d '\r' | $(AWK) \
 diff --git a/libretro/libretro.c b/libretro/libretro.c
-index 4a9f129..cb8c7be 100644
+index 4a9f129..43fedf7 100644
 --- a/libretro/libretro.c
 +++ b/libretro/libretro.c
 @@ -108,6 +108,26 @@ retro_input_poll_t poll_cb = NULL;
@@ -374,22 +374,22 @@ index 4a9f129..cb8c7be 100644
 +#define GIT_VERSION ""
 +#endif
 +
-+/* WFGEmu stereo: the frontend sets the strength and says whether it shows two eyes. The same
++/* Tremu stereo: the frontend sets the strength and says whether it shows two eyes. The same
 + * environment calls as our LRPS2 (newer libretro.h). */
-+#define WFG_ENV_SET_VIDEO_VIEWS (95 | RETRO_ENVIRONMENT_EXPERIMENTAL)
-+#define WFG_ENV_GET_VIDEO_VIEWS_STATUS (96 | RETRO_ENVIRONMENT_EXPERIMENTAL)
-+#define WFG_VIEWS_PRESENTS_AND_STEREO 3
-+struct wfg_video_view { unsigned x, y, width, height, screen, eye; float aspect_ratio; };
-+struct wfg_video_views {
-+   const struct wfg_video_view *views;
++#define TREMU_ENV_SET_VIDEO_VIEWS (95 | RETRO_ENVIRONMENT_EXPERIMENTAL)
++#define TREMU_ENV_GET_VIDEO_VIEWS_STATUS (96 | RETRO_ENVIRONMENT_EXPERIMENTAL)
++#define TREMU_VIEWS_PRESENTS_AND_STEREO 3
++struct tremu_video_view { unsigned x, y, width, height, screen, eye; float aspect_ratio; };
++struct tremu_video_views {
++   const struct tremu_video_view *views;
 +   unsigned num_views, flags;
 +   int reference_space;
 +   unsigned recommended_view_width, recommended_view_height;
 +};
-+extern void wfg_stereo_update(int on, float separation);
-+static int wfg_stereo_percent;
-+static bool wfg_stereo_active;
-+void retro_wfg_set_stereo(int percent) { wfg_stereo_percent = percent; }
++extern void tremu_stereo_update(int on, float separation);
++static int tremu_stereo_percent;
++static bool tremu_stereo_active;
++void retro_tremu_set_stereo(int percent) { tremu_stereo_percent = percent; }
  retro_environment_t environ_clear_thread_waits_cb = NULL;
  
  struct retro_rumble_interface rumble;
@@ -398,7 +398,7 @@ index 4a9f129..cb8c7be 100644
      info->geometry.base_width   = retro_screen_width;
      info->geometry.base_height  = retro_screen_height;
 -    info->geometry.max_width    = retro_screen_width;
-+    /* Room for the two eyes side by side (WFGEmu stereo), which the menu can turn on in a game. */
++    /* Room for the two eyes side by side (Tremu stereo), which the menu can turn on in a game. */
 +    info->geometry.max_width    = retro_screen_width * (current_rdp_type == RDP_PLUGIN_GLIDEN64 ? 2 : 1);
      info->geometry.max_height   = retro_screen_height;
      info->geometry.aspect_ratio = retro_screen_aspect;
@@ -408,18 +408,18 @@ index 4a9f129..cb8c7be 100644
      if(current_rdp_type == RDP_PLUGIN_GLIDEN64)
      {
 +       unsigned status = 0;
-+       bool active = wfg_stereo_percent > 0 && environ_cb(WFG_ENV_GET_VIDEO_VIEWS_STATUS, &status) &&
-+                     (status & WFG_VIEWS_PRESENTS_AND_STEREO) == WFG_VIEWS_PRESENTS_AND_STEREO;
-+       if (active != wfg_stereo_active)
++       bool active = tremu_stereo_percent > 0 && environ_cb(TREMU_ENV_GET_VIDEO_VIEWS_STATUS, &status) &&
++                     (status & TREMU_VIEWS_PRESENTS_AND_STEREO) == TREMU_VIEWS_PRESENTS_AND_STEREO;
++       if (active != tremu_stereo_active)
 +       {
-+          struct wfg_video_view views[2] = {
++          struct tremu_video_view views[2] = {
 +             {0, 0, retro_screen_width, retro_screen_height, 0, 1, retro_screen_aspect},
 +             {retro_screen_width, 0, retro_screen_width, retro_screen_height, 0, 2, retro_screen_aspect}};
-+          struct wfg_video_views map = {active ? views : NULL, active ? 2u : 0u, 0, 0, 0, 0};
-+          environ_cb(WFG_ENV_SET_VIDEO_VIEWS, &map);
-+          wfg_stereo_active = active;
++          struct tremu_video_views map = {active ? views : NULL, active ? 2u : 0u, 0, 0, 0, 0};
++          environ_cb(TREMU_ENV_SET_VIDEO_VIEWS, &map);
++          tremu_stereo_active = active;
 +       }
-+       wfg_stereo_update(active, 0.03f * wfg_stereo_percent / 100.0f);
++       tremu_stereo_update(active, 0.03f * tremu_stereo_percent / 100.0f);
 +
         if(EnableThreadedRenderer)
         {
@@ -429,7 +429,7 @@ index 4a9f129..cb8c7be 100644
         if(current_rdp_type == RDP_PLUGIN_GLIDEN64)
         {
 -          video_cb(RETRO_HW_FRAME_BUFFER_VALID, retro_screen_width, retro_screen_height, 0);
-+          video_cb(RETRO_HW_FRAME_BUFFER_VALID, retro_screen_width * (wfg_stereo_active ? 2 : 1), retro_screen_height, 0);
++          video_cb(RETRO_HW_FRAME_BUFFER_VALID, retro_screen_width * (tremu_stereo_active ? 2 : 1), retro_screen_height, 0);
         }
  #ifdef HAVE_THR_AL
         else if(current_rdp_type == RDP_PLUGIN_ANGRYLION)

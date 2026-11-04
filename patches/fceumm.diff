@@ -1,0 +1,86 @@
+diff --git a/src/drivers/libretro/libretro.c b/src/drivers/libretro/libretro.c
+index 3485976..0b664a1 100644
+--- a/src/drivers/libretro/libretro.c
++++ b/src/drivers/libretro/libretro.c
+@@ -1361,6 +1361,16 @@ void retro_set_input_state(retro_input_state_t cb)
+    input_cb = cb;
+ }
+ 
++/* Tremu: layer of each pixel of the last frame (see ppu.c), with the overscan
++ * crop of the video output so the caller can line it up with the picture. */
++extern uint8_t tremu_layers[256 * 240];
++RETRO_API const uint8_t *tremu_nes_layers(unsigned *left, unsigned *top)
++{
++   *left = (unsigned)crop_overscan_h_left;
++   *top  = (unsigned)crop_overscan_v_top;
++   return tremu_layers;
++}
++
+ static void update_nes_controllers(unsigned port, unsigned device)
+ {
+    nes_input.type[port] = device;
+diff --git a/src/drivers/libretro/link.T b/src/drivers/libretro/link.T
+index b0c262d..910f078 100644
+--- a/src/drivers/libretro/link.T
++++ b/src/drivers/libretro/link.T
+@@ -1,5 +1,5 @@
+ {
+-   global: retro_*;
++   global: retro_*; tremu_nes_layers;
+    local: *;
+ };
+ 
+diff --git a/src/ppu.c b/src/ppu.c
+index fb78963..fb0809e 100644
+--- a/src/ppu.c
++++ b/src/ppu.c
+@@ -61,6 +61,12 @@ static void FASTAPASS(1) RefreshLine(int lastpixel);
+ static void RefreshSprites(void);
+ static void CopySprites(uint8_t *target);
+ 
++/* Tremu: per-pixel layer of the last frame (256x240), for its 3D voxel view.
++ * 0 = universal background colour, 1 = background tile, 2 = sprite behind the
++ * background (seen through colour 0), 3 = sprite in front. */
++uint8_t tremu_layers[256 * 240];
++static void TremuRecordLayers(const uint8_t *target);
++
+ static void Fixit1(void);
+ static uint32_t ppulut1[256];
+ static uint32_t ppulut2[256];
+@@ -729,6 +735,9 @@ static void DoLine(void)
+ 		HDNes_RecordLine(scanline, target, rendis);
+ #endif
+ 
++	if (scanline < 240)
++		TremuRecordLayers(target);
++
+ 	if (SpriteON)
+ 		CopySprites(target);
+ 
+@@ -1083,6 +1092,26 @@ static void RefreshSprites(void) {
+ 	spork = 1;
+ }
+ 
++/* Same choice as CopySprites, made before it overwrites the background pixels:
++ * bit 6 of a background pixel marks colour 0 (transparent). */
++static void TremuRecordLayers(const uint8_t *target) {
++	uint8_t *L = tremu_layers + (scanline << 8);
++	int x;
++	for (x = 0; x < 256; x++)
++		L[x] = (target[x] & 0x40) ? 0 : 1;
++	if (!SpriteON || !spork || (rendis & 1))
++		return;
++	for (x = ((PPU[1] & 4) ^ 4) << 1; x < 256; x++) {
++		uint8_t s = sprlinebuf[x];
++		if (s & 0x80)
++			continue;	/* no sprite pixel */
++		if (!(s & 0x40))
++			L[x] = 3;
++		else if (target[x] & 0x40)
++			L[x] = 2;
++	}
++}
++
+ static void CopySprites(uint8_t *target) {
+ 	uint8_t n = ((PPU[1] & 4) ^ 4) << 1;
+ 	uint8_t *P = target;

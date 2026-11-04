@@ -630,7 +630,6 @@ index ac2f1c1..0effdfc 100644
  void USBSetPortDevice(unsigned port, int device, unsigned input_port);
 diff --git a/pcsx2/USB/libretro-usb/usb-guncon2.cpp b/pcsx2/USB/libretro-usb/usb-guncon2.cpp
 new file mode 100644
-index 0000000..f6d2459
 --- /dev/null
 +++ b/pcsx2/USB/libretro-usb/usb-guncon2.cpp
 @@ -0,0 +1,428 @@
@@ -1064,7 +1063,6 @@ index 0000000..f6d2459
 +} // namespace usb_guncon2
 diff --git a/pcsx2/USB/libretro-usb/usb-guncon2.h b/pcsx2/USB/libretro-usb/usb-guncon2.h
 new file mode 100644
-index 0000000..3c4589c
 --- /dev/null
 +++ b/pcsx2/USB/libretro-usb/usb-guncon2.h
 @@ -0,0 +1,29 @@

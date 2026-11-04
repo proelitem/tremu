@@ -16,7 +16,7 @@
 
 /* ---- Party code ---- */
 
-const char WFG_CODE_ALPHABET[33] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";  /* Crockford base32 */
+const char TREMU_CODE_ALPHABET[33] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";  /* Crockford base32 */
 
 /* 48 bits of address and port, plus 2 check bits catching most typos: 50 bits, 10 symbols. */
 static unsigned check_bits(uint64_t value) {
@@ -25,18 +25,18 @@ static unsigned check_bits(uint64_t value) {
     return sum & 3;
 }
 
-void wfg_code_encode(uint32_t ip, uint16_t port, char out[12]) {
+void tremu_code_encode(uint32_t ip, uint16_t port, char out[12]) {
     uint64_t value = (uint64_t)ip << 16 | port;
     uint64_t bits = value << 2 | check_bits(value);
     int k = 0;
-    for (int i = 0; i < WFG_CODE_LENGTH; i++) {
+    for (int i = 0; i < TREMU_CODE_LENGTH; i++) {
         if (i == 5) out[k++] = '-';
-        out[k++] = WFG_CODE_ALPHABET[(bits >> (45 - 5 * i)) & 31];
+        out[k++] = TREMU_CODE_ALPHABET[(bits >> (45 - 5 * i)) & 31];
     }
     out[k] = 0;
 }
 
-bool wfg_code_decode(const char *code, uint32_t *ip, uint16_t *port) {
+bool tremu_code_decode(const char *code, uint32_t *ip, uint16_t *port) {
     uint64_t bits = 0;
     int count = 0;
     for (const char *c = code; *c; c++) {
@@ -44,12 +44,12 @@ bool wfg_code_decode(const char *code, uint32_t *ip, uint16_t *port) {
         if (ch == '-' || ch == ' ') continue;
         if (ch == 'O') ch = '0';
         if (ch == 'I' || ch == 'L') ch = '1';
-        const char *at = strchr(WFG_CODE_ALPHABET, ch);
-        if (!at || !*at || count == WFG_CODE_LENGTH) return false;
-        bits = bits << 5 | (uint64_t)(at - WFG_CODE_ALPHABET);
+        const char *at = strchr(TREMU_CODE_ALPHABET, ch);
+        if (!at || !*at || count == TREMU_CODE_LENGTH) return false;
+        bits = bits << 5 | (uint64_t)(at - TREMU_CODE_ALPHABET);
         count++;
     }
-    if (count != WFG_CODE_LENGTH) return false;
+    if (count != TREMU_CODE_LENGTH) return false;
     uint64_t value = bits >> 2;
     if ((bits & 3) != check_bits(value)) return false;
     *ip = (uint32_t)(value >> 16);

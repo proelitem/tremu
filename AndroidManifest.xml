@@ -31,10 +31,10 @@
       android:extractNativeLibs="true" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
     <meta-data android:name="com.oculus.supportedDevices" android:value="quest2|quest3|quest3s" />
     <meta-data android:name="com.oculus.intent.category.VR" android:value="vr_only" />
-    <activity android:name=".WfgActivity" android:exported="true" android:launchMode="singleTask"
+    <activity android:name=".TremuActivity" android:exported="true" android:launchMode="singleTask"
         android:screenOrientation="landscape"
         android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode|density">
-      <meta-data android:name="android.app.lib_name" android:value="wfgemu" />
+      <meta-data android:name="android.app.lib_name" android:value="tremu" />
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />

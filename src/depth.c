@@ -173,7 +173,7 @@ static void *run(void *arg) {
     return NULL;
 }
 
-bool wfg_depth_start(const char *model_path) {
+bool tremu_depth_start(const char *model_path) {
     if (atomic_load(&running)) return true;
     if (!model_from_file && !load_api()) return false;
     snprintf(model_file, sizeof model_file, "%s", model_path);
@@ -185,7 +185,7 @@ bool wfg_depth_start(const char *model_path) {
     return true;
 }
 
-void wfg_depth_stop(void) {
+void tremu_depth_stop(void) {
     if (!atomic_load(&running)) return;
     pthread_mutex_lock(&lock);
     atomic_store(&running, false);
@@ -194,7 +194,7 @@ void wfg_depth_stop(void) {
     pthread_join(worker, NULL);
 }
 
-void wfg_depth_submit(const uint32_t *pixels, unsigned w, unsigned h) {
+void tremu_depth_submit(const uint32_t *pixels, unsigned w, unsigned h) {
     if (!atomic_load(&running) || atomic_load(&busy) || !w || !h || w * h > MAX_FRAME) return;
     pthread_mutex_lock(&lock);
     memcpy(pending, pixels, w * h * sizeof *pixels);
@@ -205,7 +205,7 @@ void wfg_depth_submit(const uint32_t *pixels, unsigned w, unsigned h) {
     pthread_mutex_unlock(&lock);
 }
 
-bool wfg_depth_get(uint8_t *out, unsigned w, unsigned h) {
+bool tremu_depth_get(uint8_t *out, unsigned w, unsigned h) {
     pthread_mutex_lock(&lock);
     bool ok = has_depth;
     for (unsigned y = 0; ok && y < h; y++) {
@@ -216,4 +216,4 @@ bool wfg_depth_get(uint8_t *out, unsigned w, unsigned h) {
     return ok;
 }
 
-float wfg_depth_ms(void) { return atomic_load(&last_us) / 1000.f; }
+float tremu_depth_ms(void) { return atomic_load(&last_us) / 1000.f; }

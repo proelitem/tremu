@@ -47,7 +47,7 @@ static bool code_down(int code) {
     return false;
 }
 
-void wfg_ext_set_bindings(const int b[EXT_ROLES]) { memcpy(bindings, b, sizeof bindings); }
+void tremu_ext_set_bindings(const int b[EXT_ROLES]) { memcpy(bindings, b, sizeof bindings); }
 
 static bool bound_elsewhere(int code) {
     for (int r = 0; r < EXT_ROLES; r++)
@@ -55,7 +55,7 @@ static bool bound_elsewhere(int code) {
     return false;
 }
 
-bool wfg_ext_pressed(ExtRole role) {
+bool tremu_ext_pressed(ExtRole role) {
     if (learning) return false;
     if (bindings[role]) return code_down(bindings[role]);
     for (int i = 0; i < MAX_DEFAULTS && defaults[role][i]; i++)
@@ -63,7 +63,7 @@ bool wfg_ext_pressed(ExtRole role) {
     return false;
 }
 
-void wfg_ext_stick(float *x, float *y) {
+void tremu_ext_stick(float *x, float *y) {
     *x = *y = 0;
     if (learning) return;
     /* A direction learned for a role is a control, not navigation. */
@@ -85,11 +85,11 @@ static void press(int code) {
     for (int r = 0; r < learn_role; r++)
         if (learned[r] == code) return;  /* the same control again (e.g. trigger still held) */
     learned[learn_role] = code;
-    LOG("gun control %d learned as %s", code, wfg_ext_role_name((ExtRole)learn_role));
+    LOG("gun control %d learned as %s", code, tremu_ext_role_name((ExtRole)learn_role));
     if (++learn_role == EXT_ROLES) learning = false;
 }
 
-int32_t wfg_ext_input(const AInputEvent *event) {
+int32_t tremu_ext_input(const AInputEvent *event) {
     int32_t type = AInputEvent_getType(event);
     if (type == AINPUT_EVENT_TYPE_KEY) {
         int32_t code = AKeyEvent_getKeyCode(event), action = AKeyEvent_getAction(event);
@@ -127,23 +127,23 @@ int32_t wfg_ext_input(const AInputEvent *event) {
     return 0;
 }
 
-void wfg_ext_learn_start(void) {
+void tremu_ext_learn_start(void) {
     learning = true;
     learn_role = 0;
     memset(learned, 0, sizeof learned);
 }
 
-void wfg_ext_learn_skip(void) {
+void tremu_ext_learn_skip(void) {
     if (!learning) return;
     learned[learn_role] = 0;  /* keep the defaults for this control */
     if (++learn_role == EXT_ROLES) learning = false;
 }
 
-bool wfg_ext_learning(void) { return learning; }
-ExtRole wfg_ext_learn_role(void) { return (ExtRole)learn_role; }
-void wfg_ext_learned(int out[EXT_ROLES]) { memcpy(out, learned, sizeof learned); }
+bool tremu_ext_learning(void) { return learning; }
+ExtRole tremu_ext_learn_role(void) { return (ExtRole)learn_role; }
+void tremu_ext_learned(int out[EXT_ROLES]) { memcpy(out, learned, sizeof learned); }
 
-const char *wfg_ext_role_name(ExtRole role) {
+const char *tremu_ext_role_name(ExtRole role) {
     switch (role) {
     case EXT_TRIGGER: return "la G\xC3\x82" "CHETTE";
     case EXT_GRENADE: return "le bouton GRENADE";
@@ -154,7 +154,7 @@ const char *wfg_ext_role_name(ExtRole role) {
     }
 }
 
-unsigned wfg_ext_last_signal(char *out, size_t size) {
+unsigned tremu_ext_last_signal(char *out, size_t size) {
     if (!last_count) snprintf(out, size, "%s", T("aucun signal re\xC3\xA7u"));
     else if (last_code < MAX_KEYS) snprintf(out, size, T("bouton %d"), last_code);
     else if (last_code < AXIS_POS) snprintf(out, size, T("clic %d"), last_code - MOUSE_BASE);

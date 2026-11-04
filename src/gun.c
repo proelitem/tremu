@@ -48,20 +48,20 @@ JNIEXPORT void JNICALL Java_com_tremu_app_WonderFitterGun_nativeBolt(JNIEnv *env
     if (state) atomic_store(&bolt_until_ns, now() + BOLT_PRESS_NS);
 }
 
-bool wfg_gun_connected(void) { return atomic_load(&magazine) >= 0; }
+bool tremu_gun_connected(void) { return atomic_load(&magazine) >= 0; }
 
-bool wfg_gun_trigger_held(uint64_t now_ns) {
+bool tremu_gun_trigger_held(uint64_t now_ns) {
     uint64_t last = atomic_load(&last_shot_ns);
     return last && now_ns - last < HOLD_NS;
 }
 
-bool wfg_gun_bolt_pressed(uint64_t now_ns) { return now_ns < atomic_load(&bolt_until_ns); }
+bool tremu_gun_bolt_pressed(uint64_t now_ns) { return now_ns < atomic_load(&bolt_until_ns); }
 
-int wfg_gun_magazine(void) { return atomic_load(&magazine); }
+int tremu_gun_magazine(void) { return atomic_load(&magazine); }
 
-unsigned wfg_gun_shots(void) { return atomic_load(&shots); }
+unsigned tremu_gun_shots(void) { return atomic_load(&shots); }
 
-unsigned wfg_gun_name(char *out, size_t size) {
+unsigned tremu_gun_name(char *out, size_t size) {
     pthread_mutex_lock(&name_lock);
     snprintf(out, size, "%s", gun_name);
     pthread_mutex_unlock(&name_lock);

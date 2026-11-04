@@ -25,7 +25,7 @@ public final class RestartActivity extends Activity {
                     return;
                 }
                 android.util.Log.i("Tremu", "restart: opening Tremu again");
-                startActivity(new Intent(RestartActivity.this, WfgActivity.class)
+                startActivity(new Intent(RestartActivity.this, TremuActivity.class)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
                 finish();
                 android.os.Process.killProcess(android.os.Process.myPid());

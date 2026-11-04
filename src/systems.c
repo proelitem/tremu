@@ -10,33 +10,33 @@
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "Tremu", __VA_ARGS__)
 
-static const WfgSystemInfo systems[SYS_COUNT] = {
-    [SYS_ARCADE] = {"Arcade", "libwfgemu_core.so", "|zip|", NULL},
-    [SYS_NES] = {"NES", "libwfgemu_fceumm.so", "|nes|fds|unf|unif|", "Nintendo - Nintendo Entertainment System"},
-    [SYS_SNES] = {"SNES", "libwfgemu_snes9x.so", "|sfc|smc|swc|fig|bs|", "Nintendo - Super Nintendo Entertainment System"},
+static const TremuSystemInfo systems[SYS_COUNT] = {
+    [SYS_ARCADE] = {"Arcade", "libtremu_core.so", "|zip|", NULL},
+    [SYS_NES] = {"NES", "libtremu_fceumm.so", "|nes|fds|unf|unif|", "Nintendo - Nintendo Entertainment System"},
+    [SYS_SNES] = {"SNES", "libtremu_snes9x.so", "|sfc|smc|swc|fig|bs|", "Nintendo - Super Nintendo Entertainment System"},
     /* CD images: the .cue (or .m3u) is the game, the .bin tracks next to it are not listed. */
-    [SYS_PS1] = {"PS1", "libwfgemu_pcsx.so", "|cue|chd|pbp|m3u|iso|cbn|mdf|toc|", "Sony - PlayStation"},
-    /* .chd and .cue can also be Dreamcast discs: wfg_system_detect looks inside. */
-    [SYS_DREAMCAST] = {"Dreamcast", "libwfgemu_flycast.so", "|gdi|cdi|", "Sega - Dreamcast"},
-    [SYS_NAOMI] = {"Naomi", "libwfgemu_flycast.so", "||", NULL},
-    /* .iso can also be a PlayStation disc: wfg_system_detect reads the disc header. */
-    [SYS_WII] = {"Wii", "libwfgemu_dolphin.so", "|wbfs|rvz|wia|gcz|ciso|wad|", "Nintendo - Wii"},
-    [SYS_GAMECUBE] = {"GameCube", "libwfgemu_dolphin.so", "|gcm|", "Nintendo - GameCube"},
-    [SYS_NAMCO246] = {"Namco", "libwfgemu_play.so", "||", NULL},
-    /* .iso and .chd are told apart from CDs by their size or CHD tag (wfg_system_detect). */
-    [SYS_PS2] = {"PS2", "libwfgemu_pcsx2.so", "||", "Sony - PlayStation 2"},
-    [SYS_N64] = {"N64", "libwfgemu_n64.so", "|z64|n64|v64|", "Nintendo - Nintendo 64"},
-    [SYS_MEGADRIVE] = {"Mega Drive", "libwfgemu_genesis.so", "|md|gen|smd|sms|gg|", "Sega - Mega Drive - Genesis"},
-    /* Saturn and Mega-CD discs are .cue files: wfg_system_detect reads the first track's header. */
-    [SYS_SATURN] = {"Saturn", "libwfgemu_saturn.so", "||", "Sega - Saturn"},
-    [SYS_MAME] = {"MAME", "libwfgemu_mame.so", "||", NULL},
-    /* .iso discs are recognised by their XDVDFS volume (wfg_system_detect). */
-    [SYS_X360] = {"Xbox 360", "libwfgemu_xenia.so", "|xex|zar|", "Microsoft - Xbox 360"},
-    [SYS_XBOX] = {"Xbox", "libwfgemu_xemu.so", "||", "Microsoft - Xbox"},
+    [SYS_PS1] = {"PS1", "libtremu_pcsx.so", "|cue|chd|pbp|m3u|iso|cbn|mdf|toc|", "Sony - PlayStation"},
+    /* .chd and .cue can also be Dreamcast discs: tremu_system_detect looks inside. */
+    [SYS_DREAMCAST] = {"Dreamcast", "libtremu_flycast.so", "|gdi|cdi|", "Sega - Dreamcast"},
+    [SYS_NAOMI] = {"Naomi", "libtremu_flycast.so", "||", NULL},
+    /* .iso can also be a PlayStation disc: tremu_system_detect reads the disc header. */
+    [SYS_WII] = {"Wii", "libtremu_dolphin.so", "|wbfs|rvz|wia|gcz|ciso|wad|", "Nintendo - Wii"},
+    [SYS_GAMECUBE] = {"GameCube", "libtremu_dolphin.so", "|gcm|", "Nintendo - GameCube"},
+    [SYS_NAMCO246] = {"Namco", "libtremu_play.so", "||", NULL},
+    /* .iso and .chd are told apart from CDs by their size or CHD tag (tremu_system_detect). */
+    [SYS_PS2] = {"PS2", "libtremu_pcsx2.so", "||", "Sony - PlayStation 2"},
+    [SYS_N64] = {"N64", "libtremu_n64.so", "|z64|n64|v64|", "Nintendo - Nintendo 64"},
+    [SYS_MEGADRIVE] = {"Mega Drive", "libtremu_genesis.so", "|md|gen|smd|sms|gg|", "Sega - Mega Drive - Genesis"},
+    /* Saturn and Mega-CD discs are .cue files: tremu_system_detect reads the first track's header. */
+    [SYS_SATURN] = {"Saturn", "libtremu_saturn.so", "||", "Sega - Saturn"},
+    [SYS_MAME] = {"MAME", "libtremu_mame.so", "||", NULL},
+    /* .iso discs are recognised by their XDVDFS volume (tremu_system_detect). */
+    [SYS_X360] = {"Xbox 360", "libtremu_xenia.so", "|xex|zar|", "Microsoft - Xbox 360"},
+    [SYS_XBOX] = {"Xbox", "libtremu_xemu.so", "||", "Microsoft - Xbox"},
     [SYS_WIIU] = {"Wii U", "", "||", "Nintendo - Wii U"},
     [SYS_PS3] = {"PS3", "", "||", "Sony - PlayStation 3"},
-    /* .iso and .pbp are told apart by their content, anything in a "psp" folder is PSP (wfg_system_detect). */
-    [SYS_PSP] = {"PSP", "libwfgemu_ppsspp.so", "|cso|", "Sony - PlayStation Portable"},
+    /* .iso and .pbp are told apart by their content, anything in a "psp" folder is PSP (tremu_system_detect). */
+    [SYS_PSP] = {"PSP", "libtremu_ppsspp.so", "|cso|", "Sony - PlayStation Portable"},
     [SYS_VITA] = {"PS Vita", "", "||", "Sony - PlayStation Vita"},
 };
 
@@ -46,7 +46,7 @@ static const struct { const char *set, *title; } namco_sets[] = {
     {"cobrata", "Cobra The Arcade"},
 };
 
-const char *wfg_namco_title(const char *set) {
+const char *tremu_namco_title(const char *set) {
     for (size_t i = 0; i < sizeof namco_sets / sizeof namco_sets[0]; i++)
         if (!strcasecmp(set, namco_sets[i].set)) return namco_sets[i].title;
     return NULL;
@@ -63,13 +63,13 @@ static const struct { const char *set, *title; } naomi_sets[] = {
     {"xtrmhnt2", "Extreme Hunting 2"}, {"rangrmsn", "Ranger Mission"},
 };
 
-const char *wfg_naomi_title(const char *set) {
+const char *tremu_naomi_title(const char *set) {
     for (size_t i = 0; i < sizeof naomi_sets / sizeof naomi_sets[0]; i++)
         if (!strcasecmp(set, naomi_sets[i].set)) return naomi_sets[i].title;
     return NULL;
 }
 
-const WfgSystemInfo *wfg_system_info(WfgSystem system) { return &systems[system < SYS_COUNT ? system : SYS_ARCADE]; }
+const TremuSystemInfo *tremu_system_info(TremuSystem system) { return &systems[system < SYS_COUNT ? system : SYS_ARCADE]; }
 
 static int system_of_name(const char *name) {
     const char *dot = strrchr(name, '.');
@@ -214,7 +214,7 @@ static bool any_console_file(const char *name, void *ctx) {
 static bool file_of_system(const char *name, void *ctx) { return system_of_name(name) == *(int *)ctx; }
 
 /* True when path sits directly in a folder named "mame": the player's sets for MAME. */
-bool wfg_in_mame_folder(const char *path) {
+bool tremu_in_mame_folder(const char *path) {
     const char *slash = strrchr(path, '/');
     if (!slash) return false;
     const char *parent = slash - 1;
@@ -236,9 +236,9 @@ static bool pbp_is_psp(FILE *f) {
     return memcmp(psar, "PSISOIMG", 8) && memcmp(psar, "PSTITLEI", 8);
 }
 
-int wfg_system_detect(const char *path) {
+int tremu_system_detect(const char *path) {
     struct stat st;
-    if (!stat(path, &st) && S_ISDIR(st.st_mode)) return wfg_in_mame_folder(path) ? SYS_MAME : SYS_ARCADE;  /* an unzipped set */
+    if (!stat(path, &st) && S_ISDIR(st.st_mode)) return tremu_in_mame_folder(path) ? SYS_MAME : SYS_ARCADE;  /* an unzipped set */
     const char *dot = strrchr(path, '.');
     if (!dot || strchr(dot, '/')) return -1;
     /* The "psp" folder settles the formats other consoles share, and adds homebrew programs. */
@@ -277,9 +277,9 @@ int wfg_system_detect(const char *path) {
     const char *slash = strrchr(path, '/');
     char set[64];
     snprintf(set, sizeof set, "%.*s", (int)(dot - (slash ? slash + 1 : path)), slash ? slash + 1 : path);
-    if (wfg_in_mame_folder(path)) return SYS_MAME;
-    if (wfg_naomi_title(set)) return SYS_NAOMI;
-    if (wfg_namco_title(set)) return SYS_NAMCO246;
+    if (tremu_in_mame_folder(path)) return SYS_MAME;
+    if (tremu_naomi_title(set)) return SYS_NAOMI;
+    if (tremu_namco_title(set)) return SYS_NAMCO246;
     if (slash) {
         const char *parent = slash - 1;
         while (parent > path && parent[-1] != '/') parent--;
@@ -300,7 +300,7 @@ int wfg_system_detect(const char *path) {
     return system == SYS_PS1 || system == SYS_DREAMCAST || system == SYS_WII || system == SYS_GAMECUBE || system == SYS_PSP ? -1 : system;
 }
 
-bool wfg_system_unzip(const char *zip, WfgSystem system, const char *dir, char *out, size_t out_size) {
+bool tremu_system_unzip(const char *zip, TremuSystem system, const char *dir, char *out, size_t out_size) {
     FILE *f = fopen(zip, "rb");
     if (!f) return false;
     uint32_t dir_size;
@@ -351,7 +351,7 @@ bool wfg_system_unzip(const char *zip, WfgSystem system, const char *dir, char *
     return ok;
 }
 
-bool wfg_system_xbox_gun_game(const char *path) {
+bool tremu_system_xbox_gun_game(const char *path) {
     /* The original Xbox games that support its light guns; matched on the file name. */
     static const char *const names[] = {"silent scope", "house of the dead", "starsky"};
     const char *name = strrchr(path, '/');
@@ -361,7 +361,7 @@ bool wfg_system_xbox_gun_game(const char *path) {
     return false;
 }
 
-bool wfg_system_gun_game(const char *path) {
+bool tremu_system_gun_game(const char *path) {
     /* Console games made for a gun (GunCon, Menacer, Justifier, Dreamcast gun); everything else gets
      * the Touch controllers as a gamepad. Matched on the file name. */
     static const char *const names[] = {

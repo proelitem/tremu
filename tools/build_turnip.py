@@ -1,6 +1,6 @@
 """Builds our Turnip Vulkan driver for Quest (see turnip_quest_patch.py) from ../_src/mesa, with the
 WinNative patch set (../_src/wn-drivers) so it matches a WN-Turnip balanced build.
-Output: third_party/turnip/WFG-Turnip.zip (libvulkan_freedreno.so + meta.json), an asset of the APK.
+Output: third_party/turnip/Tremu-Turnip.zip (libvulkan_freedreno.so + meta.json), an asset of the APK.
 The patches are applied once to the Mesa checkout. Usage: python tools/build_turnip.py
 """
 import json, os, subprocess, sys, zipfile
@@ -30,7 +30,7 @@ def replace(path, old, new):
 
 
 def patch_once():
-    stamp = MESA / '.wfg-patched'
+    stamp = MESA / '.tremu-patched'
     if stamp.exists():
         return
     for script in WN_SCRIPTS:
@@ -99,9 +99,9 @@ endian = 'little'
             '-Dandroid-libbacktrace=disabled', env=env)
     run(NINJA, '-C', BUILD, '-j', '6', 'src/freedreno/vulkan/libvulkan_freedreno.so', env=env)
     lib = BUILD / 'src' / 'freedreno' / 'vulkan' / 'libvulkan_freedreno.so'
-    out = ROOT / 'third_party' / 'turnip' / 'WFG-Turnip.zip'
-    meta = {'schemaVersion': 1, 'name': 'WFG-Turnip', 'description': 'Turnip for Quest (GPUOBJ_ALLOC fallback), WinNative patches',
-            'author': 'Tremu', 'packageVersion': '1', 'vendor': 'Mesa', 'driverVersion': 'WFG-1', 'minApi': 29,
+    out = ROOT / 'third_party' / 'turnip' / 'Tremu-Turnip.zip'
+    meta = {'schemaVersion': 1, 'name': 'Tremu-Turnip', 'description': 'Turnip for Quest (GPUOBJ_ALLOC fallback), WinNative patches',
+            'author': 'Tremu', 'packageVersion': '1', 'vendor': 'Mesa', 'driverVersion': 'Tremu-1', 'minApi': 29,
             'libraryName': 'libvulkan_freedreno.so'}
     with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
         z.write(lib, lib.name)

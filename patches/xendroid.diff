@@ -1,13 +1,13 @@
 diff --git a/emulator-core/src/main/cpp/CMakeLists.txt b/emulator-core/src/main/cpp/CMakeLists.txt
-index c09914a..40ca8e8 100644
+index c09914a..b24f350 100644
 --- a/emulator-core/src/main/cpp/CMakeLists.txt
 +++ b/emulator-core/src/main/cpp/CMakeLists.txt
 @@ -51,6 +51,8 @@ target_sources(emu
          cpuinfo.cpp
          vkapi.cpp
          vkutil.cpp
-+        # WFGEmu: the libretro-shaped entry points (WFGEmu loads this library as libwfgemu_xenia.so).
-+        wfg_libretro.cpp
++        # Tremu: the libretro-shaped entry points (Tremu loads this library as libtremu_xenia.so).
++        tremu_libretro.cpp
  )
  
  # Pre-flight: the GPU/UI shaders are compiled to SPIR-V at build time by
@@ -9608,15 +9608,15 @@ index 0000000..80d31f2
 +#endif
 +
 +#endif
-diff --git a/emulator-core/src/main/cpp/wfg_libretro.cpp b/emulator-core/src/main/cpp/wfg_libretro.cpp
+diff --git a/emulator-core/src/main/cpp/tremu_libretro.cpp b/emulator-core/src/main/cpp/tremu_libretro.cpp
 new file mode 100644
-index 0000000..a16ff43
+index 0000000..cfbd2b2
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/wfg_libretro.cpp
++++ b/emulator-core/src/main/cpp/tremu_libretro.cpp
 @@ -0,0 +1,483 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +//
-+// WFGEmu: XenDroid (Xenia, Xbox 360) as a libretro-shaped core, so WFGEmu drives it like its other
++// Tremu: XenDroid (Xenia, Xbox 360) as a libretro-shaped core, so Tremu drives it like its other
 +// emulators (virtual screen in VR, Touch controllers as the Xbox pad, carousel and menu).
 +//
 +// - Video: Xenia presents to an ANativeWindow that belongs to an AImageReader (CPU-readable
@@ -9625,9 +9625,9 @@ index 0000000..a16ff43
 +// - Input: RetroPad port 0 -> XenDroid's Android input driver (ae::key_event).
 +// - Audio: Xenia's own AAudio output (nothing goes through the frontend).
 +// - GPU driver: option "xenia_vulkan_driver" picks the system Adreno driver or one of the Turnip
-+//   builds that WFGEmu unpacks into files/drivers/<name>/ (loaded with libadrenotools).
++//   builds that Tremu unpacks into files/drivers/<name>/ (loaded with libadrenotools).
 +// - Message boxes and disc swaps have no UI here: answered automatically. Keyboard requests go to
-+//   WFGEmu's text panel (wfg_text_pending / wfg_text_submit).
++//   Tremu's text panel (tremu_text_pending / tremu_text_submit).
 +// - Saves need a signed-in profile: one is created on first boot and signed in on slot 0.
 +
 +#include <android/hardware_buffer.h>
@@ -9656,7 +9656,7 @@ index 0000000..a16ff43
 +#include "xe_android_text_input.h"
 +#include "xenia/kernel/xam/profile_standalone.h"
 +
-+#define LOG(...) __android_log_print(ANDROID_LOG_INFO, "WFGEmu-xenia", __VA_ARGS__)
++#define LOG(...) __android_log_print(ANDROID_LOG_INFO, "Tremu-xenia", __VA_ARGS__)
 +
 +extern JavaVM* g_jvm;
 +extern jobject g_context;
@@ -9664,7 +9664,7 @@ index 0000000..a16ff43
 +extern std::vector<std::string> g_launch_args;
 +
 +namespace ae {
-+// Added to xendroid_emu.cpp for WFGEmu.
++// Added to xendroid_emu.cpp for Tremu.
 +bool emulator_ready();
 +}  // namespace ae
 +
@@ -9770,7 +9770,7 @@ index 0000000..a16ff43
 +  const char* choice = variable("xenia_vulkan_driver");
 +  if (!choice) choice = "";
 +  static const struct { const char *label, *folder; } drivers[] = {
-+      {"WFG-Turnip", "WFG-Turnip"},
++      {"Tremu-Turnip", "Tremu-Turnip"},
 +  };
 +  for (const auto& d : drivers) {
 +    if (strcmp(choice, d.label)) continue;
@@ -9825,7 +9825,7 @@ index 0000000..a16ff43
 +    {RETRO_DEVICE_ID_JOYPAD_L3, 12},   {RETRO_DEVICE_ID_JOYPAD_R3, 13},
 +    {RETRO_DEVICE_ID_JOYPAD_L2, 14},   {RETRO_DEVICE_ID_JOYPAD_R2, 15},
 +};
-+extern "C" void wfg_stereo_set_turning(bool turning);  // vulkan_command_processor.cc
++extern "C" void tremu_stereo_set_turning(bool turning);  // vulkan_command_processor.cc
 +
 +bool pressed_before[16];
 +int16_t axis_before[8];
@@ -9884,14 +9884,14 @@ index 0000000..a16ff43
 +  } else if (turning_frames > 0) {
 +    --turning_frames;
 +  }
-+  wfg_stereo_set_turning(turning_frames > 0);
++  tremu_stereo_set_turning(turning_frames > 0);
 +}
 +
 +}  // namespace
 +
-+// WFGEmu hands the Java VM and its activity before retro_init (the core is dlopen'ed from native
++// Tremu hands the Java VM and its activity before retro_init (the core is dlopen'ed from native
 +// code, so JNI_OnLoad never runs).
-+extern "C" __attribute__((visibility("default"))) void wfg_set_android(JavaVM* vm, jobject activity) {
++extern "C" __attribute__((visibility("default"))) void tremu_set_android(JavaVM* vm, jobject activity) {
 +  g_jvm = vm;
 +  JNIEnv* env = nullptr;
 +  bool attached = false;
@@ -9910,24 +9910,24 @@ index 0000000..a16ff43
 +  if (attached) vm->DetachCurrentThread();
 +  // libadrenotools loads its hook libraries from our own lib folder.
 +  Dl_info info;
-+  if (dladdr((void*)&wfg_set_android, &info) && info.dli_fname) {
++  if (dladdr((void*)&tremu_set_android, &info) && info.dli_fname) {
 +    g_native_lib_dir = info.dli_fname;
 +    g_native_lib_dir.resize(g_native_lib_dir.find_last_of('/'));
 +  }
 +  LOG("files %s, libs %s", files_dir.c_str(), g_native_lib_dir.c_str());
 +}
 +
-+// A game asks for text (character name, save title): WFGEmu shows its panel, then answers. A null
++// A game asks for text (character name, save title): Tremu shows its panel, then answers. A null
 +// text cancels, which leaves the game's default.
-+extern "C" void wfg_stereo_set(bool enabled, int percent);  // vulkan_command_processor.cc
++extern "C" void tremu_stereo_set(bool enabled, int percent);  // vulkan_command_processor.cc
 +
 +// The frontend's stereo strength, in percent, before each retro_run; 0 for flat.
-+extern "C" __attribute__((visibility("default"))) void retro_wfg_set_stereo(int percent) {
++extern "C" __attribute__((visibility("default"))) void retro_tremu_set_stereo(int percent) {
 +  stereo_percent = percent;
-+  wfg_stereo_set(stereo_window, percent);
++  tremu_stereo_set(stereo_window, percent);
 +}
 +
-+extern "C" __attribute__((visibility("default"))) bool wfg_text_pending(char* title, size_t title_size, char* text,
++extern "C" __attribute__((visibility("default"))) bool tremu_text_pending(char* title, size_t title_size, char* text,
 +                                                                        size_t text_size, unsigned* max_length) {
 +  xendroid::PendingTextInput request;
 +  if (!xendroid::PeekTextInputRequest(request)) return false;
@@ -9937,7 +9937,7 @@ index 0000000..a16ff43
 +  return true;
 +}
 +
-+extern "C" __attribute__((visibility("default"))) void wfg_text_submit(const char* text) {
++extern "C" __attribute__((visibility("default"))) void tremu_text_submit(const char* text) {
 +  xendroid::PendingTextInput request;
 +  if (xendroid::PeekTextInputRequest(request)) xendroid::SubmitTextInput(request.id, text != nullptr, text ? text : "");
 +}
@@ -9950,7 +9950,7 @@ index 0000000..a16ff43
 +  environ_cb = cb;
 +  static const retro_variable vars[] = {
 +      {"xenia_vulkan_driver",
-+       "Pilote Vulkan; WFG-Turnip|Adreno (systeme)"},
++       "Pilote Vulkan; Tremu-Turnip|Adreno (systeme)"},
 +      {nullptr, nullptr},
 +  };
 +  cb(RETRO_ENVIRONMENT_SET_VARIABLES, (void*)vars);
@@ -9966,8 +9966,8 @@ index 0000000..a16ff43
 +
 +RETRO_API void retro_get_system_info(retro_system_info* info) {
 +  memset(info, 0, sizeof *info);
-+  info->library_name = "Xenia (XenDroid, WFGEmu)";
-+  info->library_version = "wfg";
++  info->library_name = "Xenia (XenDroid, Tremu)";
++  info->library_version = "tremu";
 +  info->valid_extensions = "iso|xex|zar";
 +  info->need_fullpath = true;
 +}
@@ -9985,9 +9985,9 @@ index 0000000..a16ff43
 +RETRO_API bool retro_load_game(const retro_game_info* game) {
 +  if (!game || !game->path) return false;
 +  if (!g_jvm) {
-+    // Test harness (no JVM): WFG_FILES_DIR stands for the app's files folder.
-+    const char* dir = getenv("WFG_FILES_DIR");
-+    if (!dir) { LOG("no Java VM (wfg_set_android not called)"); return false; }
++    // Test harness (no JVM): TREMU_FILES_DIR stands for the app's files folder.
++    const char* dir = getenv("TREMU_FILES_DIR");
++    if (!dir) { LOG("no Java VM (tremu_set_android not called)"); return false; }
 +    files_dir = dir;
 +    Dl_info info;
 +    if (dladdr((void*)&retro_load_game, &info) && info.dli_fname) {
@@ -9999,12 +9999,12 @@ index 0000000..a16ff43
 +  environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
 +  memset(pressed_before, 0, sizeof pressed_before);
 +  memset(axis_before, 0, sizeof axis_before);
-+  // Xenia runs one title per process (KernelState::TerminateTitle calls quick_exit): WFGEmu restarts
++  // Xenia runs one title per process (KernelState::TerminateTitle calls quick_exit): Tremu restarts
 +  // itself when leaving a game, so a second load here is a frontend error.
 +  if (booted) { LOG("Xenia already ran a game in this process"); return false; }
 +  stereo_window = frontend_shows_eyes();
 +  window_width = stereo_window ? 2 * kWidth : kWidth;
-+  wfg_stereo_set(stereo_window, stereo_window ? 100 : 0);
++  tremu_stereo_set(stereo_window, stereo_window ? 100 : 0);
 +  LOG("stereo %s, window %dx%d", stereo_window ? "on" : "off", window_width, kHeight);
 +  {
 +    std::lock_guard<std::mutex> lock(frame_mutex);
@@ -10098,7 +10098,7 @@ index 0000000..a16ff43
 +
 +}  // extern "C"
 diff --git a/emulator-core/src/main/cpp/xendroid_emu.cpp b/emulator-core/src/main/cpp/xendroid_emu.cpp
-index efba523..aefb84d 100644
+index efba523..271fd66 100644
 --- a/emulator-core/src/main/cpp/xendroid_emu.cpp
 +++ b/emulator-core/src/main/cpp/xendroid_emu.cpp
 @@ -463,7 +463,7 @@ void EmulatorApp::emu_thr_main() {
@@ -10106,7 +10106,7 @@ index efba523..aefb84d 100644
  
      JNIEnv *env;
 -    g_jvm->AttachCurrentThread(&env, nullptr);
-+    if (g_jvm) g_jvm->AttachCurrentThread(&env, nullptr);  // WFGEmu test harness runs without a JVM
++    if (g_jvm) g_jvm->AttachCurrentThread(&env, nullptr);  // Tremu test harness runs without a JVM
  
      xe::threading::set_name("Emulator");
      xe::Profiler::ThreadEnter("Emulator");
@@ -10114,7 +10114,7 @@ index efba523..aefb84d 100644
          g_app_context->CallInUIThread([win]{ win->UpdateSurface(); });
      }
  
-+    // WFGEmu (wfg_libretro.cpp).
++    // Tremu (tremu_libretro.cpp).
 +    bool emulator_ready(){
 +        return g_windowed_app_ref && g_windowed_app_ref->emu && g_app_context;
 +    }
@@ -10122,26 +10122,26 @@ index efba523..aefb84d 100644
      void surface_resize(int width, int height){
          std::lock_guard<std::mutex> lk(window_mutex);
          window_width = width;
-diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_capture.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_capture.cs.glsl
+diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_capture.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_capture.cs.glsl
 new file mode 100644
-index 0000000..9a97fa7
+index 0000000..f6cfa27
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_capture.cs.glsl
++++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_capture.cs.glsl
 @@ -0,0 +1,7 @@
 +#version 460
 +#extension GL_EXT_samplerless_texture_functions : require
 +#extension GL_GOOGLE_include_directive : require
 +
 +layout(set = 1, binding = 0) uniform texture2D depth;
-+#define WFG_FETCH_DEPTH(p) texelFetch(depth, p, 0).r
-+#include "wfg_stereo_capture.glsli"
-diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_capture.glsli b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_capture.glsli
++#define TREMU_FETCH_DEPTH(p) texelFetch(depth, p, 0).r
++#include "tremu_stereo_capture.glsli"
+diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_capture.glsli b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_capture.glsli
 new file mode 100644
-index 0000000..d1bdb02
+index 0000000..06f2ebd
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_capture.glsli
++++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_capture.glsli
 @@ -0,0 +1,29 @@
-+// WFGEmu stereo: copies a rectangle of a guest depth render target into the frame's depth image, as
++// Tremu stereo: copies a rectangle of a guest depth render target into the frame's depth image, as
 +// nearness: 1 at the game's near plane, 0 at infinity, whichever way round the game's Z goes. Both
 +// conventions are linear in the inverse of the distance. Sample 0 of a multisampled target.
 +// Flag 1 of flags: Z goes the reverse way. Flag 2: merge, keeping the nearest of what the image
@@ -10163,36 +10163,36 @@ index 0000000..d1bdb02
 +  if (any(greaterThanEqual(p, c.size))) {
 +    return;
 +  }
-+  float z = WFG_FETCH_DEPTH(c.source + p * 2);  // Every other pixel and row.
++  float z = TREMU_FETCH_DEPTH(c.source + p * 2);  // Every other pixel and row.
 +  float n = (c.flags & 1u) != 0u ? z : 1.0 - z;
 +  if ((c.flags & 2u) != 0u) {
 +    n = max(n, imageLoad(nearness, c.dest + p).r);
 +  }
 +  imageStore(nearness, c.dest + p, vec4(n));
 +}
-diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_capture_ms.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_capture_ms.cs.glsl
+diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_capture_ms.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_capture_ms.cs.glsl
 new file mode 100644
-index 0000000..b53a55d
+index 0000000..9cdc945
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_capture_ms.cs.glsl
++++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_capture_ms.cs.glsl
 @@ -0,0 +1,7 @@
 +#version 460
 +#extension GL_EXT_samplerless_texture_functions : require
 +#extension GL_GOOGLE_include_directive : require
 +
 +layout(set = 1, binding = 0) uniform texture2DMS depth;
-+#define WFG_FETCH_DEPTH(p) texelFetch(depth, p, 0).r
-+#include "wfg_stereo_capture.glsli"
-diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_eyes.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_eyes.cs.glsl
++#define TREMU_FETCH_DEPTH(p) texelFetch(depth, p, 0).r
++#include "tremu_stereo_capture.glsli"
+diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_eyes.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_eyes.cs.glsl
 new file mode 100644
-index 0000000..95657fc
+index 0000000..f94b04c
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_eyes.cs.glsl
++++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_eyes.cs.glsl
 @@ -0,0 +1,141 @@
 +#version 460
 +#extension GL_EXT_samplerless_texture_functions : require
 +
-+// WFGEmu stereo: the two eyes side by side, from the picture and its relief (same idea as the PS2
++// Tremu stereo: the two eyes side by side, from the picture and its relief (same idea as the PS2
 +// core's ps_vr_eye). The picture is a window; an eye half a separation to one side sees a pixel of
 +// the relief moved along the window by P = near_shift..far_shift, depending on how far behind the
 +// window that pixel is. The ray through each pixel is marched from the nearest to the farthest until
@@ -10330,26 +10330,26 @@ index 0000000..95657fc
 +  }
 +  imageStore(dest, p, vec4(color, 1.0));
 +}
-diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_picture.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_picture.cs.glsl
+diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_picture.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_picture.cs.glsl
 new file mode 100644
-index 0000000..deb6e7f
+index 0000000..6c7bdac
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_picture.cs.glsl
++++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_picture.cs.glsl
 @@ -0,0 +1,7 @@
 +#version 460
 +#extension GL_EXT_samplerless_texture_functions : require
 +#extension GL_GOOGLE_include_directive : require
 +
 +layout(set = 1, binding = 0) uniform texture2D color;
-+#define WFG_FETCH_COLOR(p) texelFetch(color, p, 0)
-+#include "wfg_stereo_picture.glsli"
-diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_picture.glsli b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_picture.glsli
++#define TREMU_FETCH_COLOR(p) texelFetch(color, p, 0)
++#include "tremu_stereo_picture.glsli"
+diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_picture.glsli b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_picture.glsli
 new file mode 100644
-index 0000000..dcd177e
+index 0000000..85c40a7
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_picture.glsli
++++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_picture.glsli
 @@ -0,0 +1,18 @@
-+// WFGEmu stereo: copies the frame as it is just before the HUD goes on it. Sample 0 of a multisampled
++// Tremu stereo: copies the frame as it is just before the HUD goes on it. Sample 0 of a multisampled
 +// render target.
 +
 +layout(local_size_x = 16, local_size_y = 8, local_size_z = 1) in;
@@ -10365,31 +10365,31 @@ index 0000000..dcd177e
 +  if (any(greaterThanEqual(p, c.size))) {
 +    return;
 +  }
-+  imageStore(dest, p, vec4(WFG_FETCH_COLOR(p).rgb, 1.0));
++  imageStore(dest, p, vec4(TREMU_FETCH_COLOR(p).rgb, 1.0));
 +}
-diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_picture_ms.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_picture_ms.cs.glsl
+diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_picture_ms.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_picture_ms.cs.glsl
 new file mode 100644
-index 0000000..bb8ead2
+index 0000000..9ce0e8a
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_picture_ms.cs.glsl
++++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_picture_ms.cs.glsl
 @@ -0,0 +1,7 @@
 +#version 460
 +#extension GL_EXT_samplerless_texture_functions : require
 +#extension GL_GOOGLE_include_directive : require
 +
 +layout(set = 1, binding = 0) uniform texture2DMS color;
-+#define WFG_FETCH_COLOR(p) texelFetch(color, p, 0)
-+#include "wfg_stereo_picture.glsli"
-diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_range.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_range.cs.glsl
++#define TREMU_FETCH_COLOR(p) texelFetch(color, p, 0)
++#include "tremu_stereo_picture.glsli"
+diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_range.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_range.cs.glsl
 new file mode 100644
-index 0000000..0e8105a
+index 0000000..8cf08cb
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_range.cs.glsl
++++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_range.cs.glsl
 @@ -0,0 +1,63 @@
 +#version 460
 +#extension GL_EXT_samplerless_texture_functions : require
 +
-+// WFGEmu stereo: the range of nearness a frame uses, in octaves (log2), so depth means the same from
++// Tremu stereo: the range of nearness a frame uses, in octaves (log2), so depth means the same from
 +// game to game. A histogram of a grid of samples gives the 5th and 99th percentiles, leaving out the
 +// sky and the odd object against the camera; eased from frame to frame so the scene does not breathe.
 +
@@ -10449,16 +10449,16 @@ index 0000000..0e8105a
 +  vec2 range = last.z > 0.5 ? mix(last.xy, vec2(lo, hi), c.ease) : vec2(lo, hi);
 +  imageStore(range_image, ivec2(0), vec4(range, 1.0, float(total)));
 +}
-diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_relief.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_relief.cs.glsl
+diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_relief.cs.glsl b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_relief.cs.glsl
 new file mode 100644
-index 0000000..7fbe075
+index 0000000..7a32b24
 --- /dev/null
-+++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/wfg_stereo_relief.cs.glsl
++++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/shaders/tremu_stereo_relief.cs.glsl
 @@ -0,0 +1,37 @@
 +#version 460
 +#extension GL_EXT_samplerless_texture_functions : require
 +
-+// WFGEmu stereo: the relief under the picture, 0 at the frame's farthest and 1 at its nearest. Even
++// Tremu stereo: the relief under the picture, 0 at the frame's farthest and 1 at its nearest. Even
 +// steps per octave of distance rather than per unit of its inverse: in a linear scale a weapon held
 +// close would leave the whole world on one flat plane.
 +
@@ -10493,15 +10493,15 @@ index 0000000..7fbe075
 +  imageStore(relief, p, vec4(t));
 +}
 diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/spirv_shader_translator.cc b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/spirv_shader_translator.cc
-index ddb25e7..e34200d 100644
+index ddb25e7..a9726c5 100644
 --- a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/spirv_shader_translator.cc
 +++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/spirv_shader_translator.cc
 @@ -441,6 +441,9 @@ void SpirvShaderTranslator::StartTranslation() {
         type_uint_},
        {"vertex_base_index", offsetof(SystemConstants, vertex_base_index),
         type_int_},
-+      {"wfg_eye_shift", offsetof(SystemConstants, wfg_eye_shift), type_float_},
-+      {"wfg_convergence", offsetof(SystemConstants, wfg_convergence),
++      {"tremu_eye_shift", offsetof(SystemConstants, tremu_eye_shift), type_float_},
++      {"tremu_convergence", offsetof(SystemConstants, tremu_convergence),
 +       type_float_},
        {"ndc_scale", offsetof(SystemConstants, ndc_scale), type_float3_},
        {"point_vertex_diameter_min",
@@ -10510,21 +10510,21 @@ index ddb25e7..e34200d 100644
    position_xyz = builder_->createNoContractionBinOp(
        spv::OpFAdd, type_float3_, position_xyz, ndc_offset_mul_w);
  
-+  // WFGEmu stereo: seen from this frame's eye, x moves by shift * (w - convergence),
++  // Tremu stereo: seen from this frame's eye, x moves by shift * (w - convergence),
 +  // no further towards the viewer than one shift across the screen so that what is
 +  // held in the hands stays comfortable. A w of 1 is drawn in screen space (the HUD,
 +  // post-processing, orthographic shadows): it stays where it is.
 +  {
 +    id_vector_temp_.clear();
 +    id_vector_temp_.push_back(
-+        builder_->makeIntConstant(kSystemConstantWfgEyeShift));
++        builder_->makeIntConstant(kSystemConstantTremuEyeShift));
 +    spv::Id eye_shift = builder_->createLoad(
 +        builder_->createAccessChain(spv::StorageClassUniform,
 +                                    uniform_system_constants_, id_vector_temp_),
 +        spv::NoPrecision);
 +    id_vector_temp_.clear();
 +    id_vector_temp_.push_back(
-+        builder_->makeIntConstant(kSystemConstantWfgConvergence));
++        builder_->makeIntConstant(kSystemConstantTremuConvergence));
 +    spv::Id convergence = builder_->createLoad(
 +        builder_->createAccessChain(spv::StorageClassUniform,
 +                                    uniform_system_constants_, id_vector_temp_),
@@ -10561,7 +10561,7 @@ index ddb25e7..e34200d 100644
    // the value being non-zero kills. Done after the NDC transform since the kill
    // cull distance is just a flag and the position is about to be written.
 diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/spirv_shader_translator.h b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/spirv_shader_translator.h
-index df6165e..43241e1 100644
+index df6165e..450162c 100644
 --- a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/spirv_shader_translator.h
 +++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/spirv_shader_translator.h
 @@ -42,7 +42,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
@@ -10578,9 +10578,9 @@ index df6165e..43241e1 100644
      xenos::Endian vertex_index_endian;
      int32_t vertex_base_index;
 -    uint32_t padding_after_vertex_index[3];
-+    // WFGEmu stereo: this frame's eye, see CompleteVertexOrTessEvalShader.
-+    float wfg_eye_shift;
-+    float wfg_convergence;
++    // Tremu stereo: this frame's eye, see CompleteVertexOrTessEvalShader.
++    float tremu_eye_shift;
++    float tremu_convergence;
 +    uint32_t padding_after_vertex_index[1];
  
      float ndc_scale[3];
@@ -10589,13 +10589,13 @@ index df6165e..43241e1 100644
      kSystemConstantVertexIndexCount,
      kSystemConstantVertexIndexEndian,
      kSystemConstantVertexBaseIndex,
-+    kSystemConstantWfgEyeShift,
-+    kSystemConstantWfgConvergence,
++    kSystemConstantTremuEyeShift,
++    kSystemConstantTremuConvergence,
      kSystemConstantNdcScale,
      kSystemConstantPointVertexDiameterMin,
      kSystemConstantNdcOffset,
 diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_command_processor.cc b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_command_processor.cc
-index 7e92705..fa526ea 100644
+index 7e92705..0fd0ab1 100644
 --- a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_command_processor.cc
 +++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_command_processor.cc
 @@ -7,6 +7,8 @@
@@ -10621,23 +10621,23 @@ index 7e92705..fa526ea 100644
  #include "xenia/gpu/shaders/bytecode/vulkan_spirv/fxaa_cs.h"
  #include "xenia/gpu/shaders/bytecode/vulkan_spirv/fxaa_extreme_cs.h"
  #include "xenia/gpu/shaders/bytecode/vulkan_spirv/resolve_downscale_cs.h"
-+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/wfg_stereo_capture_cs.h"
-+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/wfg_stereo_capture_ms_cs.h"
-+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/wfg_stereo_eyes_cs.h"
-+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/wfg_stereo_picture_cs.h"
-+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/wfg_stereo_picture_ms_cs.h"
-+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/wfg_stereo_range_cs.h"
-+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/wfg_stereo_relief_cs.h"
++#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tremu_stereo_capture_cs.h"
++#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tremu_stereo_capture_ms_cs.h"
++#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tremu_stereo_eyes_cs.h"
++#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tremu_stereo_picture_cs.h"
++#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tremu_stereo_picture_ms_cs.h"
++#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tremu_stereo_range_cs.h"
++#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tremu_stereo_relief_cs.h"
  }  // namespace shaders
  
-+// Set by the WFGEmu core, before boot and then whenever the strength changes.
-+extern "C" void wfg_stereo_set_turning(bool turning) {
-+  wfg_stereo::turning = turning;
++// Set by the Tremu core, before boot and then whenever the strength changes.
++extern "C" void tremu_stereo_set_turning(bool turning) {
++  tremu_stereo::turning = turning;
 +}
 +
-+extern "C" void wfg_stereo_set(bool enabled, int percent) {
-+  wfg_stereo::enabled = enabled;
-+  wfg_stereo::percent = percent;
++extern "C" void tremu_stereo_set(bool enabled, int percent) {
++  tremu_stereo::enabled = enabled;
++  tremu_stereo::percent = percent;
 +}
 +
  constexpr VkDescriptorPoolSize
@@ -10647,7 +10647,7 @@ index 7e92705..fa526ea 100644
  }
  
  void VulkanCommandProcessor::ShutdownContext() {
-+  WfgStereoShutdown();
++  TremuStereoShutdown();
    AwaitAllQueueOperationsCompletion();
  
    ResetResolveReadWatch();
@@ -10655,37 +10655,37 @@ index 7e92705..fa526ea 100644
    gamma_ramp_pwl_current_frame_ = UINT32_MAX;
  }
  
-+namespace wfg_debug {
++namespace tremu_debug {
 +void OnSwap();
 +void OnCopy(const RegisterFile& regs);
-+}  // namespace wfg_debug
++}  // namespace tremu_debug
 +
-+// WFGEmu stereo. Same idea and same numbers as the PS2 core (GSRenderer.cpp, VR):
++// Tremu stereo. Same idea and same numbers as the PS2 core (GSRenderer.cpp, VR):
 +// the picture is a window one unit wide at a distance of one width, the eyes a
 +// twenty-fifth of it apart; the nearest of the frame a little in front of the
 +// window, the farthest at three and a third times its distance by default.
 +namespace {
-+constexpr float kWfgStereoSeparation = 0.04f;
++constexpr float kTremuStereoSeparation = 0.04f;
 +// Alternate frames: each eye's shift at infinity, in clip space (2 is the width).
-+constexpr float kWfgStereoAlternateShift = 0.03f;
++constexpr float kTremuStereoAlternateShift = 0.03f;
 +// A relief coming back at once is felt as a jolt, even as vertigo.
-+constexpr float kWfgStereoEaseSeconds = 1.0f;
-+constexpr float kWfgStereoNearPerDepth = 0.12f;
-+constexpr float kWfgStereoFarPerDepth = 0.7f;
-+constexpr float kWfgStereoFarLeast = 0.02f;
-+constexpr int kWfgStereoMaxSteps = 32;
-+constexpr float kWfgStereoRangeEase = 0.2f;
-+constexpr uint32_t kWfgStereoPushConstantsSize = 40;
++constexpr float kTremuStereoEaseSeconds = 1.0f;
++constexpr float kTremuStereoNearPerDepth = 0.12f;
++constexpr float kTremuStereoFarPerDepth = 0.7f;
++constexpr float kTremuStereoFarLeast = 0.02f;
++constexpr int kTremuStereoMaxSteps = 32;
++constexpr float kTremuStereoRangeEase = 0.2f;
++constexpr uint32_t kTremuStereoPushConstantsSize = 40;
 +}  // namespace
 +
-+bool VulkanCommandProcessor::WfgStereoInitialize() {
-+  if (wfg_stereo_ready_) {
++bool VulkanCommandProcessor::TremuStereoInitialize() {
++  if (tremu_stereo_ready_) {
 +    return true;
 +  }
-+  if (wfg_stereo_failed_) {
++  if (tremu_stereo_failed_) {
 +    return false;
 +  }
-+  wfg_stereo_failed_ = true;  // Until everything below has worked.
++  tremu_stereo_failed_ = true;  // Until everything below has worked.
 +  const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
 +  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
 +  const VkDevice device = vulkan_device->device();
@@ -10716,23 +10716,23 @@ index 7e92705..fa526ea 100644
 +  set_layout_info.bindingCount = 1;
 +  set_layout_info.pBindings = &capture_binding;
 +  if (dfn.vkCreateDescriptorSetLayout(device, &set_layout_info, nullptr,
-+                                      &wfg_stereo_capture_set_layout_) !=
++                                      &tremu_stereo_capture_set_layout_) !=
 +      VK_SUCCESS) {
-+    XELOGE("WFG stereo: descriptor set layout failed");
++    XELOGE("Tremu stereo: descriptor set layout failed");
 +    return false;
 +  }
 +  set_layout_info.bindingCount = uint32_t(xe::countof(bindings));
 +  set_layout_info.pBindings = bindings;
 +  if (dfn.vkCreateDescriptorSetLayout(device, &set_layout_info, nullptr,
-+                                      &wfg_stereo_set_layout_) != VK_SUCCESS) {
-+    XELOGE("WFG stereo: descriptor set layout failed");
++                                      &tremu_stereo_set_layout_) != VK_SUCCESS) {
++    XELOGE("Tremu stereo: descriptor set layout failed");
 +    return false;
 +  }
 +
 +  VkPushConstantRange push_range = {VK_SHADER_STAGE_COMPUTE_BIT, 0,
-+                                    kWfgStereoPushConstantsSize};
++                                    kTremuStereoPushConstantsSize};
 +  VkDescriptorSetLayout capture_layouts[] = {
-+      wfg_stereo_capture_set_layout_,
++      tremu_stereo_capture_set_layout_,
 +      render_target_cache_->descriptor_set_layout_sampled_image_x2()};
 +  VkPipelineLayoutCreateInfo layout_info = {
 +      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -10741,21 +10741,21 @@ index 7e92705..fa526ea 100644
 +  layout_info.pushConstantRangeCount = 1;
 +  layout_info.pPushConstantRanges = &push_range;
 +  if (dfn.vkCreatePipelineLayout(device, &layout_info, nullptr,
-+                                 &wfg_stereo_capture_layout_) != VK_SUCCESS) {
-+    XELOGE("WFG stereo: pipeline layout failed");
++                                 &tremu_stereo_capture_layout_) != VK_SUCCESS) {
++    XELOGE("Tremu stereo: pipeline layout failed");
 +    return false;
 +  }
 +  capture_layouts[1] = render_target_cache_->descriptor_set_layout_sampled_image();
 +  if (dfn.vkCreatePipelineLayout(device, &layout_info, nullptr,
-+                                 &wfg_stereo_picture_layout_) != VK_SUCCESS) {
-+    XELOGE("WFG stereo: pipeline layout failed");
++                                 &tremu_stereo_picture_layout_) != VK_SUCCESS) {
++    XELOGE("Tremu stereo: pipeline layout failed");
 +    return false;
 +  }
 +  layout_info.setLayoutCount = 1;
-+  layout_info.pSetLayouts = &wfg_stereo_set_layout_;
++  layout_info.pSetLayouts = &tremu_stereo_set_layout_;
 +  if (dfn.vkCreatePipelineLayout(device, &layout_info, nullptr,
-+                                 &wfg_stereo_layout_) != VK_SUCCESS) {
-+    XELOGE("WFG stereo: pipeline layout failed");
++                                 &tremu_stereo_layout_) != VK_SUCCESS) {
++    XELOGE("Tremu stereo: pipeline layout failed");
 +    return false;
 +  }
 +
@@ -10770,50 +10770,50 @@ index 7e92705..fa526ea 100644
 +  pool_info.poolSizeCount = uint32_t(xe::countof(pool_sizes));
 +  pool_info.pPoolSizes = pool_sizes;
 +  if (dfn.vkCreateDescriptorPool(device, &pool_info, nullptr,
-+                                 &wfg_stereo_pool_) != VK_SUCCESS) {
-+    XELOGE("WFG stereo: descriptor pool failed");
++                                 &tremu_stereo_pool_) != VK_SUCCESS) {
++    XELOGE("Tremu stereo: descriptor pool failed");
 +    return false;
 +  }
 +  VkDescriptorSetAllocateInfo allocate_info = {
 +      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-+  allocate_info.descriptorPool = wfg_stereo_pool_;
++  allocate_info.descriptorPool = tremu_stereo_pool_;
 +  allocate_info.descriptorSetCount = 1;
-+  allocate_info.pSetLayouts = &wfg_stereo_capture_set_layout_;
++  allocate_info.pSetLayouts = &tremu_stereo_capture_set_layout_;
 +  if (dfn.vkAllocateDescriptorSets(device, &allocate_info,
-+                                   &wfg_stereo_capture_set_) != VK_SUCCESS) {
-+    XELOGE("WFG stereo: descriptor set failed");
++                                   &tremu_stereo_capture_set_) != VK_SUCCESS) {
++    XELOGE("Tremu stereo: descriptor set failed");
 +    return false;
 +  }
 +  if (dfn.vkAllocateDescriptorSets(device, &allocate_info,
-+                                   &wfg_stereo_picture_set_) != VK_SUCCESS) {
-+    XELOGE("WFG stereo: descriptor set failed");
++                                   &tremu_stereo_picture_set_) != VK_SUCCESS) {
++    XELOGE("Tremu stereo: descriptor set failed");
 +    return false;
 +  }
 +  allocate_info.pSetLayouts = &swap_descriptor_set_layout_sampled_image_;
 +  if (dfn.vkAllocateDescriptorSets(device, &allocate_info,
-+                                   &wfg_stereo_scene_source_set_) !=
++                                   &tremu_stereo_scene_source_set_) !=
 +      VK_SUCCESS) {
-+    XELOGE("WFG stereo: descriptor set failed");
++    XELOGE("Tremu stereo: descriptor set failed");
 +    return false;
 +  }
 +  allocate_info.pSetLayouts = &swap_descriptor_set_layout_storage_image_;
 +  if (dfn.vkAllocateDescriptorSets(device, &allocate_info,
-+                                   &wfg_stereo_scene_dest_set_) != VK_SUCCESS) {
-+    XELOGE("WFG stereo: descriptor set failed");
++                                   &tremu_stereo_scene_dest_set_) != VK_SUCCESS) {
++    XELOGE("Tremu stereo: descriptor set failed");
 +    return false;
 +  }
-+  allocate_info.pSetLayouts = &wfg_stereo_set_layout_;
-+  for (VkDescriptorSet& set : wfg_stereo_sets_) {
++  allocate_info.pSetLayouts = &tremu_stereo_set_layout_;
++  for (VkDescriptorSet& set : tremu_stereo_sets_) {
 +    if (dfn.vkAllocateDescriptorSets(device, &allocate_info, &set) !=
 +        VK_SUCCESS) {
-+      XELOGE("WFG stereo: descriptor set failed");
++      XELOGE("Tremu stereo: descriptor set failed");
 +      return false;
 +    }
 +  }
-+  for (VkDescriptorSet& set : wfg_stereo_hold_sets_) {
++  for (VkDescriptorSet& set : tremu_stereo_hold_sets_) {
 +    if (dfn.vkAllocateDescriptorSets(device, &allocate_info, &set) !=
 +        VK_SUCCESS) {
-+      XELOGE("WFG stereo: descriptor set failed");
++      XELOGE("Tremu stereo: descriptor set failed");
 +      return false;
 +    }
 +  }
@@ -10823,18 +10823,18 @@ index 7e92705..fa526ea 100644
 +    uint32_t width, height;
 +    VkImageUsageFlags usage;
 +  } images[] = {
-+      {VK_FORMAT_R32_SFLOAT, wfg_stereo::kDepthWidth, wfg_stereo::kDepthHeight,
++      {VK_FORMAT_R32_SFLOAT, tremu_stereo::kDepthWidth, tremu_stereo::kDepthHeight,
 +       VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT},
-+      {VK_FORMAT_R32_SFLOAT, wfg_stereo::kReliefWidth, wfg_stereo::kReliefHeight,
++      {VK_FORMAT_R32_SFLOAT, tremu_stereo::kReliefWidth, tremu_stereo::kReliefHeight,
 +       VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT},
 +      {VK_FORMAT_R32G32B32A32_SFLOAT, 1, 1, VK_IMAGE_USAGE_STORAGE_BIT},
-+      {VK_FORMAT_R8G8B8A8_UNORM, wfg_stereo::kDepthWidth,
-+       wfg_stereo::kDepthHeight,
++      {VK_FORMAT_R8G8B8A8_UNORM, tremu_stereo::kDepthWidth,
++       tremu_stereo::kDepthHeight,
 +       VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT},
-+      {kFxaaSourceFormat, wfg_stereo::kDepthWidth, wfg_stereo::kDepthHeight,
++      {kFxaaSourceFormat, tremu_stereo::kDepthWidth, tremu_stereo::kDepthHeight,
 +       VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT},
-+      {VK_FORMAT_A2B10G10R10_UNORM_PACK32, 2 * wfg_stereo::kEyeWidth,
-+       wfg_stereo::kEyeHeight,
++      {VK_FORMAT_A2B10G10R10_UNORM_PACK32, 2 * tremu_stereo::kEyeWidth,
++       tremu_stereo::kEyeHeight,
 +       VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT},
 +  };
 +  for (size_t i = 0; i < xe::countof(images); ++i) {
@@ -10852,18 +10852,18 @@ index 7e92705..fa526ea 100644
 +    if (!ui::vulkan::util::CreateDedicatedAllocationImage(
 +            vulkan_device, image_info,
 +            ui::vulkan::util::MemoryPurpose::kDeviceLocal,
-+            wfg_stereo_images_[i], wfg_stereo_memory_[i])) {
-+      XELOGE("WFG stereo: image failed");
++            tremu_stereo_images_[i], tremu_stereo_memory_[i])) {
++      XELOGE("Tremu stereo: image failed");
 +      return false;
 +    }
 +    VkImageViewCreateInfo view_info = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-+    view_info.image = wfg_stereo_images_[i];
++    view_info.image = tremu_stereo_images_[i];
 +    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
 +    view_info.format = images[i].format;
 +    view_info.subresourceRange = ui::vulkan::util::InitializeSubresourceRange();
 +    if (dfn.vkCreateImageView(device, &view_info, nullptr,
-+                              &wfg_stereo_views_[i]) != VK_SUCCESS) {
-+      XELOGE("WFG stereo: image view failed");
++                              &tremu_stereo_views_[i]) != VK_SUCCESS) {
++      XELOGE("Tremu stereo: image view failed");
 +      return false;
 +    }
 +  }
@@ -10880,14 +10880,14 @@ index 7e92705..fa526ea 100644
 +    write.pImageInfo = &image_info;
 +    dfn.vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
 +  };
-+  write_image(wfg_stereo_capture_set_, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+              wfg_stereo_views_[0]);
++  write_image(tremu_stereo_capture_set_, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++              tremu_stereo_views_[0]);
 +  auto write_eye_set = [&](VkDescriptorSet set) {
-+    write_image(set, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, wfg_stereo_views_[0]);
-+    write_image(set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, wfg_stereo_views_[1]);
-+    write_image(set, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, wfg_stereo_views_[1]);
-+    write_image(set, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, wfg_stereo_views_[2]);
-+    VkDescriptorImageInfo scene_info = {fxaa_sampler_, wfg_stereo_views_[4],
++    write_image(set, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, tremu_stereo_views_[0]);
++    write_image(set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, tremu_stereo_views_[1]);
++    write_image(set, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, tremu_stereo_views_[1]);
++    write_image(set, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, tremu_stereo_views_[2]);
++    VkDescriptorImageInfo scene_info = {fxaa_sampler_, tremu_stereo_views_[4],
 +                                        VK_IMAGE_LAYOUT_GENERAL};
 +    VkWriteDescriptorSet scene_write = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
 +    scene_write.dstSet = set;
@@ -10896,52 +10896,52 @@ index 7e92705..fa526ea 100644
 +    scene_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 +    scene_write.pImageInfo = &scene_info;
 +    dfn.vkUpdateDescriptorSets(device, 1, &scene_write, 0, nullptr);
-+    scene_info.imageView = wfg_stereo_views_[5];
++    scene_info.imageView = tremu_stereo_views_[5];
 +    scene_write.dstBinding = 7;
 +    dfn.vkUpdateDescriptorSets(device, 1, &scene_write, 0, nullptr);
 +  };
-+  for (VkDescriptorSet set : wfg_stereo_sets_) {
++  for (VkDescriptorSet set : tremu_stereo_sets_) {
 +    write_eye_set(set);
 +  }
-+  for (VkDescriptorSet set : wfg_stereo_hold_sets_) {
++  for (VkDescriptorSet set : tremu_stereo_hold_sets_) {
 +    write_eye_set(set);
-+    write_image(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, wfg_stereo_views_[5]);
++    write_image(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, tremu_stereo_views_[5]);
 +  }
-+  write_image(wfg_stereo_picture_set_, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+              wfg_stereo_views_[3]);
-+  write_image(wfg_stereo_scene_source_set_, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-+              wfg_stereo_views_[3]);
-+  write_image(wfg_stereo_scene_dest_set_, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+              wfg_stereo_views_[4]);
++  write_image(tremu_stereo_picture_set_, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++              tremu_stereo_views_[3]);
++  write_image(tremu_stereo_scene_source_set_, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
++              tremu_stereo_views_[3]);
++  write_image(tremu_stereo_scene_dest_set_, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++              tremu_stereo_views_[4]);
 +
-+  wfg_stereo_capture_pipeline_ = ui::vulkan::util::CreateComputePipeline(
-+      vulkan_device, wfg_stereo_capture_layout_, shaders::wfg_stereo_capture_cs,
-+      sizeof(shaders::wfg_stereo_capture_cs));
-+  wfg_stereo_capture_ms_pipeline_ = ui::vulkan::util::CreateComputePipeline(
-+      vulkan_device, wfg_stereo_capture_layout_,
-+      shaders::wfg_stereo_capture_ms_cs,
-+      sizeof(shaders::wfg_stereo_capture_ms_cs));
-+  wfg_stereo_range_pipeline_ = ui::vulkan::util::CreateComputePipeline(
-+      vulkan_device, wfg_stereo_layout_, shaders::wfg_stereo_range_cs,
-+      sizeof(shaders::wfg_stereo_range_cs));
-+  wfg_stereo_relief_pipeline_ = ui::vulkan::util::CreateComputePipeline(
-+      vulkan_device, wfg_stereo_layout_, shaders::wfg_stereo_relief_cs,
-+      sizeof(shaders::wfg_stereo_relief_cs));
-+  wfg_stereo_eyes_pipeline_ = ui::vulkan::util::CreateComputePipeline(
-+      vulkan_device, wfg_stereo_layout_, shaders::wfg_stereo_eyes_cs,
-+      sizeof(shaders::wfg_stereo_eyes_cs));
-+  wfg_stereo_picture_pipeline_ = ui::vulkan::util::CreateComputePipeline(
-+      vulkan_device, wfg_stereo_picture_layout_, shaders::wfg_stereo_picture_cs,
-+      sizeof(shaders::wfg_stereo_picture_cs));
-+  wfg_stereo_picture_ms_pipeline_ = ui::vulkan::util::CreateComputePipeline(
-+      vulkan_device, wfg_stereo_picture_layout_,
-+      shaders::wfg_stereo_picture_ms_cs,
-+      sizeof(shaders::wfg_stereo_picture_ms_cs));
-+  if (!wfg_stereo_capture_pipeline_ || !wfg_stereo_capture_ms_pipeline_ ||
-+      !wfg_stereo_range_pipeline_ || !wfg_stereo_relief_pipeline_ ||
-+      !wfg_stereo_eyes_pipeline_ || !wfg_stereo_picture_pipeline_ ||
-+      !wfg_stereo_picture_ms_pipeline_) {
-+    XELOGE("WFG stereo: compute pipeline failed");
++  tremu_stereo_capture_pipeline_ = ui::vulkan::util::CreateComputePipeline(
++      vulkan_device, tremu_stereo_capture_layout_, shaders::tremu_stereo_capture_cs,
++      sizeof(shaders::tremu_stereo_capture_cs));
++  tremu_stereo_capture_ms_pipeline_ = ui::vulkan::util::CreateComputePipeline(
++      vulkan_device, tremu_stereo_capture_layout_,
++      shaders::tremu_stereo_capture_ms_cs,
++      sizeof(shaders::tremu_stereo_capture_ms_cs));
++  tremu_stereo_range_pipeline_ = ui::vulkan::util::CreateComputePipeline(
++      vulkan_device, tremu_stereo_layout_, shaders::tremu_stereo_range_cs,
++      sizeof(shaders::tremu_stereo_range_cs));
++  tremu_stereo_relief_pipeline_ = ui::vulkan::util::CreateComputePipeline(
++      vulkan_device, tremu_stereo_layout_, shaders::tremu_stereo_relief_cs,
++      sizeof(shaders::tremu_stereo_relief_cs));
++  tremu_stereo_eyes_pipeline_ = ui::vulkan::util::CreateComputePipeline(
++      vulkan_device, tremu_stereo_layout_, shaders::tremu_stereo_eyes_cs,
++      sizeof(shaders::tremu_stereo_eyes_cs));
++  tremu_stereo_picture_pipeline_ = ui::vulkan::util::CreateComputePipeline(
++      vulkan_device, tremu_stereo_picture_layout_, shaders::tremu_stereo_picture_cs,
++      sizeof(shaders::tremu_stereo_picture_cs));
++  tremu_stereo_picture_ms_pipeline_ = ui::vulkan::util::CreateComputePipeline(
++      vulkan_device, tremu_stereo_picture_layout_,
++      shaders::tremu_stereo_picture_ms_cs,
++      sizeof(shaders::tremu_stereo_picture_ms_cs));
++  if (!tremu_stereo_capture_pipeline_ || !tremu_stereo_capture_ms_pipeline_ ||
++      !tremu_stereo_range_pipeline_ || !tremu_stereo_relief_pipeline_ ||
++      !tremu_stereo_eyes_pipeline_ || !tremu_stereo_picture_pipeline_ ||
++      !tremu_stereo_picture_ms_pipeline_) {
++    XELOGE("Tremu stereo: compute pipeline failed");
 +    return false;
 +  }
 +  VkQueryPoolCreateInfo queries_info = {
@@ -10950,61 +10950,61 @@ index 7e92705..fa526ea 100644
 +  queries_info.queryCount = 2 * kMaxFramesInFlight;
 +  if (vulkan_device->properties().timestampPeriod <= 0.0f ||
 +      dfn.vkCreateQueryPool(device, &queries_info, nullptr,
-+                            &wfg_stereo_queries_) != VK_SUCCESS) {
-+    wfg_stereo_queries_ = VK_NULL_HANDLE;
++                            &tremu_stereo_queries_) != VK_SUCCESS) {
++    tremu_stereo_queries_ = VK_NULL_HANDLE;
 +  }
-+  wfg_stereo_failed_ = false;
-+  wfg_stereo_ready_ = true;
++  tremu_stereo_failed_ = false;
++  tremu_stereo_ready_ = true;
 +  return true;
 +}
 +
-+void VulkanCommandProcessor::WfgStereoShutdown() {
++void VulkanCommandProcessor::TremuStereoShutdown() {
 +  const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
 +  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
 +  const VkDevice device = vulkan_device->device();
 +  for (VkPipeline* pipeline :
-+       {&wfg_stereo_capture_pipeline_, &wfg_stereo_capture_ms_pipeline_,
-+        &wfg_stereo_range_pipeline_, &wfg_stereo_relief_pipeline_,
-+        &wfg_stereo_eyes_pipeline_, &wfg_stereo_picture_pipeline_,
-+        &wfg_stereo_picture_ms_pipeline_}) {
++       {&tremu_stereo_capture_pipeline_, &tremu_stereo_capture_ms_pipeline_,
++        &tremu_stereo_range_pipeline_, &tremu_stereo_relief_pipeline_,
++        &tremu_stereo_eyes_pipeline_, &tremu_stereo_picture_pipeline_,
++        &tremu_stereo_picture_ms_pipeline_}) {
 +    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
 +                                           *pipeline);
 +  }
-+  for (size_t i = 0; i < wfg_stereo_images_.size(); ++i) {
++  for (size_t i = 0; i < tremu_stereo_images_.size(); ++i) {
 +    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyImageView, device,
-+                                           wfg_stereo_views_[i]);
++                                           tremu_stereo_views_[i]);
 +    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyImage, device,
-+                                           wfg_stereo_images_[i]);
++                                           tremu_stereo_images_[i]);
 +    ui::vulkan::util::DestroyAndNullHandle(dfn.vkFreeMemory, device,
-+                                           wfg_stereo_memory_[i]);
++                                           tremu_stereo_memory_[i]);
 +  }
 +  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyQueryPool, device,
-+                                         wfg_stereo_queries_);
++                                         tremu_stereo_queries_);
 +  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
-+                                         wfg_stereo_pool_);
++                                         tremu_stereo_pool_);
 +  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
-+                                         wfg_stereo_layout_);
++                                         tremu_stereo_layout_);
 +  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
-+                                         wfg_stereo_capture_layout_);
++                                         tremu_stereo_capture_layout_);
 +  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
-+                                         wfg_stereo_picture_layout_);
++                                         tremu_stereo_picture_layout_);
 +  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorSetLayout,
-+                                         device, wfg_stereo_set_layout_);
++                                         device, tremu_stereo_set_layout_);
 +  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorSetLayout,
 +                                         device,
-+                                         wfg_stereo_capture_set_layout_);
-+  wfg_stereo_ready_ = false;
-+  wfg_stereo_images_prepared_ = false;
-+  wfg_stereo_range_valid_ = false;
++                                         tremu_stereo_capture_set_layout_);
++  tremu_stereo_ready_ = false;
++  tremu_stereo_images_prepared_ = false;
++  tremu_stereo_range_valid_ = false;
 +}
 +
 +// The images stay in the general layout from their first use on.
-+void VulkanCommandProcessor::WfgStereoPrepareImages() {
-+  if (wfg_stereo_images_prepared_) {
++void VulkanCommandProcessor::TremuStereoPrepareImages() {
++  if (tremu_stereo_images_prepared_) {
 +    return;
 +  }
-+  wfg_stereo_images_prepared_ = true;
-+  for (VkImage image : wfg_stereo_images_) {
++  tremu_stereo_images_prepared_ = true;
++  for (VkImage image : tremu_stereo_images_) {
 +    PushImageMemoryBarrier(
 +        image, ui::vulkan::util::InitializeSubresourceRange(),
 +        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -11013,17 +11013,17 @@ index 7e92705..fa526ea 100644
 +  }
 +}
 +
-+bool VulkanCommandProcessor::WfgStereoCaptureDepth(
++bool VulkanCommandProcessor::TremuStereoCaptureDepth(
 +    VkDescriptorSet depth_source, bool multisampled, int32_t source_x,
 +    int32_t source_y, int32_t dest_x, int32_t dest_y, int32_t width,
 +    int32_t height, bool reverse_z, bool merge) {
-+  if (!WfgStereoInitialize()) {
++  if (!TremuStereoInitialize()) {
 +    return false;
 +  }
-+  WfgStereoPrepareImages();
++  TremuStereoPrepareImages();
 +  // Same stages and accesses on both sides would be taken for no barrier at all.
 +  PushImageMemoryBarrier(
-+      wfg_stereo_images_[0], ui::vulkan::util::InitializeSubresourceRange(),
++      tremu_stereo_images_[0], ui::vulkan::util::InitializeSubresourceRange(),
 +      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +      VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
@@ -11031,8 +11031,8 @@ index 7e92705..fa526ea 100644
 +      VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 +      VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, false);
 +  SubmitBarriers(true);
-+  BindExternalComputePipeline(multisampled ? wfg_stereo_capture_ms_pipeline_
-+                                           : wfg_stereo_capture_pipeline_);
++  BindExternalComputePipeline(multisampled ? tremu_stereo_capture_ms_pipeline_
++                                           : tremu_stereo_capture_pipeline_);
 +  // Every other pixel and row, the destination at half the coordinates. A rectangle
 +  // starting on an odd row (a tile) rounds to the row beside it.
 +  const struct {
@@ -11043,11 +11043,11 @@ index 7e92705..fa526ea 100644
 +                 {(width + 1) / 2, (height + 1) / 2},
 +                 uint32_t(reverse_z) | (uint32_t(merge) << 1)};
 +  deferred_command_buffer_.CmdVkPushConstants(
-+      wfg_stereo_capture_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
++      tremu_stereo_capture_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
 +      sizeof(constants), &constants);
-+  VkDescriptorSet sets[] = {wfg_stereo_capture_set_, depth_source};
++  VkDescriptorSet sets[] = {tremu_stereo_capture_set_, depth_source};
 +  deferred_command_buffer_.CmdVkBindDescriptorSets(
-+      VK_PIPELINE_BIND_POINT_COMPUTE, wfg_stereo_capture_layout_, 0, 2, sets, 0,
++      VK_PIPELINE_BIND_POINT_COMPUTE, tremu_stereo_capture_layout_, 0, 2, sets, 0,
 +      nullptr);
 +  ++submission_in_progress_.dispatch_count;
 +  deferred_command_buffer_.CmdVkDispatch(((uint32_t(width) + 1) / 2 + 15) / 16,
@@ -11056,30 +11056,30 @@ index 7e92705..fa526ea 100644
 +  return true;
 +}
 +
-+bool VulkanCommandProcessor::WfgStereoCapturePicture(
++bool VulkanCommandProcessor::TremuStereoCapturePicture(
 +    VkDescriptorSet color_source, bool multisampled, int32_t width,
 +    int32_t height) {
-+  if (!WfgStereoInitialize()) {
++  if (!TremuStereoInitialize()) {
 +    return false;
 +  }
-+  WfgStereoPrepareImages();
++  TremuStereoPrepareImages();
 +  PushImageMemoryBarrier(
-+      wfg_stereo_images_[3], ui::vulkan::util::InitializeSubresourceRange(),
++      tremu_stereo_images_[3], ui::vulkan::util::InitializeSubresourceRange(),
 +      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +      VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
 +      VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 +      VK_IMAGE_LAYOUT_GENERAL);
 +  SubmitBarriers(true);
-+  BindExternalComputePipeline(multisampled ? wfg_stereo_picture_ms_pipeline_
-+                                           : wfg_stereo_picture_pipeline_);
++  BindExternalComputePipeline(multisampled ? tremu_stereo_picture_ms_pipeline_
++                                           : tremu_stereo_picture_pipeline_);
 +  const int32_t size[2] = {width, height};
-+  deferred_command_buffer_.CmdVkPushConstants(wfg_stereo_picture_layout_,
++  deferred_command_buffer_.CmdVkPushConstants(tremu_stereo_picture_layout_,
 +                                              VK_SHADER_STAGE_COMPUTE_BIT, 0,
 +                                              sizeof(size), size);
-+  VkDescriptorSet sets[] = {wfg_stereo_picture_set_, color_source};
++  VkDescriptorSet sets[] = {tremu_stereo_picture_set_, color_source};
 +  deferred_command_buffer_.CmdVkBindDescriptorSets(
-+      VK_PIPELINE_BIND_POINT_COMPUTE, wfg_stereo_picture_layout_, 0, 2, sets, 0,
++      VK_PIPELINE_BIND_POINT_COMPUTE, tremu_stereo_picture_layout_, 0, 2, sets, 0,
 +      nullptr);
 +  ++submission_in_progress_.dispatch_count;
 +  deferred_command_buffer_.CmdVkDispatch((uint32_t(width) + 15) / 16,
@@ -11089,7 +11089,7 @@ index 7e92705..fa526ea 100644
 +
 +// The picture is in the FXAA source image, ready to sample; the guest output
 +// ready to write.
-+void VulkanCommandProcessor::WfgStereoDrawEyes(
++void VulkanCommandProcessor::TremuStereoDrawEyes(
 +    VkImageView guest_output_view, uint32_t frame_index, float picture_aspect,
 +    uint32_t front_width, uint32_t front_height, VkPipeline gamma_pipeline,
 +    VkDescriptorSet gamma_ramp) {
@@ -11098,9 +11098,9 @@ index 7e92705..fa526ea 100644
 +  const VkDevice device = vulkan_device->device();
 +  const VkImageSubresourceRange subresources =
 +      ui::vulkan::util::InitializeSubresourceRange();
-+  WfgStereoPrepareImages();
++  TremuStereoPrepareImages();
 +
-+  VkDescriptorSet set = wfg_stereo_sets_[frame_index];
++  VkDescriptorSet set = tremu_stereo_sets_[frame_index];
 +  VkDescriptorImageInfo picture_info = {
 +      fxaa_sampler_, fxaa_source_image_view_,
 +      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -11119,56 +11119,56 @@ index 7e92705..fa526ea 100644
 +  writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 +  writes[1].pImageInfo = &dest_info;
 +  dfn.vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
-+  const bool alternate = wfg_stereo::alternate.load(std::memory_order_relaxed);
-+  VkDescriptorSet hold_set = wfg_stereo_hold_sets_[frame_index];
++  const bool alternate = tremu_stereo::alternate.load(std::memory_order_relaxed);
++  VkDescriptorSet hold_set = tremu_stereo_hold_sets_[frame_index];
 +  if (alternate) {
 +    writes[0].dstSet = hold_set;
 +    dfn.vkUpdateDescriptorSets(device, 1, writes, 0, nullptr);
 +  }
 +
 +  // This slot's timestamps are from a frame now finished.
-+  if (wfg_stereo_queries_) {
++  if (tremu_stereo_queries_) {
 +    static const auto get_results = PFN_vkGetQueryPoolResults(
 +        vulkan_device->vulkan_instance()->functions().vkGetDeviceProcAddr(
 +            device, "vkGetQueryPoolResults"));
 +    uint64_t times[2];
-+    if (wfg_stereo_queries_written_[frame_index] && get_results &&
-+        get_results(device, wfg_stereo_queries_, 2 * frame_index, 2,
++    if (tremu_stereo_queries_written_[frame_index] && get_results &&
++        get_results(device, tremu_stereo_queries_, 2 * frame_index, 2,
 +                    sizeof(times), times, sizeof(uint64_t),
 +                    VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
-+      wfg_stereo_gpu_ms_ +=
++      tremu_stereo_gpu_ms_ +=
 +          double(times[1] - times[0]) *
 +          double(vulkan_device->properties().timestampPeriod) / 1e6;
-+      if (++wfg_stereo_gpu_samples_ == 300) {
-+        __android_log_print(ANDROID_LOG_INFO, "WFGEmu-xenia",
++      if (++tremu_stereo_gpu_samples_ == 300) {
++        __android_log_print(ANDROID_LOG_INFO, "Tremu-xenia",
 +                            "stereo: swap passes %.2f ms of GPU per frame",
-+                            wfg_stereo_gpu_ms_ / wfg_stereo_gpu_samples_);
-+        wfg_stereo_gpu_ms_ = 0.0;
-+        wfg_stereo_gpu_samples_ = 0;
++                            tremu_stereo_gpu_ms_ / tremu_stereo_gpu_samples_);
++        tremu_stereo_gpu_ms_ = 0.0;
++        tremu_stereo_gpu_samples_ = 0;
 +      }
 +    }
 +    SubmitBarriers(true);
-+    deferred_command_buffer_.CmdVkResetQueryPool(wfg_stereo_queries_,
++    deferred_command_buffer_.CmdVkResetQueryPool(tremu_stereo_queries_,
 +                                                 2 * frame_index, 2);
 +    deferred_command_buffer_.CmdVkWriteTimestamp(
-+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, wfg_stereo_queries_,
++        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, tremu_stereo_queries_,
 +        2 * frame_index);
 +  }
 +
 +  float strength =
-+      float(wfg_stereo::percent.load(std::memory_order_relaxed)) / 100.0f;
-+  bool relief_on = !alternate && wfg_stereo_has_depth_ && strength > 0.0f;
-+  bool overlay = relief_on && wfg_stereo_overlay_;
++      float(tremu_stereo::percent.load(std::memory_order_relaxed)) / 100.0f;
++  bool relief_on = !alternate && tremu_stereo_has_depth_ && strength > 0.0f;
++  bool overlay = relief_on && tremu_stereo_overlay_;
 +
 +  if (overlay) {
 +    // The same gamma ramp as the finished picture, so they compare.
-+    PushImageMemoryBarrier(wfg_stereo_images_[3], subresources,
++    PushImageMemoryBarrier(tremu_stereo_images_[3], subresources,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_ACCESS_SHADER_WRITE_BIT,
 +                           VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
 +                           VK_IMAGE_LAYOUT_GENERAL);
-+    PushImageMemoryBarrier(wfg_stereo_images_[4], subresources,
++    PushImageMemoryBarrier(tremu_stereo_images_[4], subresources,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_ACCESS_SHADER_READ_BIT,
@@ -11185,15 +11185,15 @@ index 7e92705..fa526ea 100644
 +    std::array<VkDescriptorSet, kSwapApplyGammaDescriptorSetCount> gamma_sets{};
 +    gamma_sets[kSwapApplyGammaDescriptorSetRamp] = gamma_ramp;
 +    gamma_sets[kSwapApplyGammaDescriptorSetSource] =
-+        wfg_stereo_scene_source_set_;
-+    gamma_sets[kSwapApplyGammaDescriptorSetDest] = wfg_stereo_scene_dest_set_;
++        tremu_stereo_scene_source_set_;
++    gamma_sets[kSwapApplyGammaDescriptorSetDest] = tremu_stereo_scene_dest_set_;
 +    deferred_command_buffer_.CmdVkBindDescriptorSets(
 +        VK_PIPELINE_BIND_POINT_COMPUTE, swap_apply_gamma_pipeline_layout_, 0,
 +        uint32_t(gamma_sets.size()), gamma_sets.data(), 0, nullptr);
 +    ++submission_in_progress_.dispatch_count;
 +    deferred_command_buffer_.CmdVkDispatch((front_width + 15) / 16,
 +                                           (front_height + 7) / 8, 1);
-+    PushImageMemoryBarrier(wfg_stereo_images_[4], subresources,
++    PushImageMemoryBarrier(tremu_stereo_images_[4], subresources,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_ACCESS_SHADER_WRITE_BIT,
@@ -11201,19 +11201,19 @@ index 7e92705..fa526ea 100644
 +                           VK_IMAGE_LAYOUT_GENERAL);
 +  }
 +  deferred_command_buffer_.CmdVkBindDescriptorSets(
-+      VK_PIPELINE_BIND_POINT_COMPUTE, wfg_stereo_layout_, 0, 1, &set, 0,
++      VK_PIPELINE_BIND_POINT_COMPUTE, tremu_stereo_layout_, 0, 1, &set, 0,
 +      nullptr);
 +
-+  if (wfg_stereo_fresh_ && relief_on) {
-+    wfg_stereo_fresh_ = false;
-+    PushImageMemoryBarrier(wfg_stereo_images_[0], subresources,
++  if (tremu_stereo_fresh_ && relief_on) {
++    tremu_stereo_fresh_ = false;
++    PushImageMemoryBarrier(tremu_stereo_images_[0], subresources,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_ACCESS_SHADER_WRITE_BIT,
 +                           VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
 +                           VK_IMAGE_LAYOUT_GENERAL);
 +    PushImageMemoryBarrier(
-+        wfg_stereo_images_[2], subresources,
++        tremu_stereo_images_[2], subresources,
 +        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
 +        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
@@ -11222,40 +11222,40 @@ index 7e92705..fa526ea 100644
 +    const struct {
 +      int32_t origin[2], extent[2], size[2];
 +      float ease;
-+    } constants = {{wfg_stereo_rect_[0] / 2, wfg_stereo_rect_[1] / 2},
-+                   {std::max((wfg_stereo_rect_[2] - wfg_stereo_rect_[0]) / 2, 1),
-+                    std::max((wfg_stereo_rect_[3] - wfg_stereo_rect_[1]) / 2, 1)},
-+                   {int32_t(wfg_stereo::kReliefWidth),
-+                    int32_t(wfg_stereo::kReliefHeight)},
-+                   wfg_stereo_range_valid_ ? kWfgStereoRangeEase : -1.0f};
-+    wfg_stereo_range_valid_ = true;
++    } constants = {{tremu_stereo_rect_[0] / 2, tremu_stereo_rect_[1] / 2},
++                   {std::max((tremu_stereo_rect_[2] - tremu_stereo_rect_[0]) / 2, 1),
++                    std::max((tremu_stereo_rect_[3] - tremu_stereo_rect_[1]) / 2, 1)},
++                   {int32_t(tremu_stereo::kReliefWidth),
++                    int32_t(tremu_stereo::kReliefHeight)},
++                   tremu_stereo_range_valid_ ? kTremuStereoRangeEase : -1.0f};
++    tremu_stereo_range_valid_ = true;
 +    deferred_command_buffer_.CmdVkPushConstants(
-+        wfg_stereo_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants),
++        tremu_stereo_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants),
 +        &constants);
-+    BindExternalComputePipeline(wfg_stereo_range_pipeline_);
++    BindExternalComputePipeline(tremu_stereo_range_pipeline_);
 +    ++submission_in_progress_.dispatch_count;
 +    deferred_command_buffer_.CmdVkDispatch(1, 1, 1);
 +
 +    PushImageMemoryBarrier(
-+        wfg_stereo_images_[2], subresources,
++        tremu_stereo_images_[2], subresources,
 +        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
 +        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
 +        VK_IMAGE_LAYOUT_GENERAL);
-+    PushImageMemoryBarrier(wfg_stereo_images_[1], subresources,
++    PushImageMemoryBarrier(tremu_stereo_images_[1], subresources,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_ACCESS_SHADER_READ_BIT,
 +                           VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 +                           VK_IMAGE_LAYOUT_GENERAL);
 +    SubmitBarriers(true);
-+    BindExternalComputePipeline(wfg_stereo_relief_pipeline_);
++    BindExternalComputePipeline(tremu_stereo_relief_pipeline_);
 +    ++submission_in_progress_.dispatch_count;
-+    deferred_command_buffer_.CmdVkDispatch((wfg_stereo::kReliefWidth + 15) / 16,
-+                                           (wfg_stereo::kReliefHeight + 7) / 8,
++    deferred_command_buffer_.CmdVkDispatch((tremu_stereo::kReliefWidth + 15) / 16,
++                                           (tremu_stereo::kReliefHeight + 7) / 8,
 +                                           1);
-+    PushImageMemoryBarrier(wfg_stereo_images_[1], subresources,
++    PushImageMemoryBarrier(tremu_stereo_images_[1], subresources,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_ACCESS_SHADER_WRITE_BIT,
@@ -11265,10 +11265,10 @@ index 7e92705..fa526ea 100644
 +
 +  // Left eye: a pixel on the relief appears shifted by -shift, so the ray through
 +  // a pixel of the eye finds the relief at +shift. Half a separation either side.
-+  float half_separation = 0.5f * kWfgStereoSeparation;
-+  float w_near = 1.0f + kWfgStereoNearPerDepth * strength;
++  float half_separation = 0.5f * kTremuStereoSeparation;
++  float w_near = 1.0f + kTremuStereoNearPerDepth * strength;
 +  float w_far =
-+      std::max(kWfgStereoFarLeast, 1.0f - kWfgStereoFarPerDepth * strength);
++      std::max(kTremuStereoFarLeast, 1.0f - kTremuStereoFarPerDepth * strength);
 +  float near_shift = half_separation * (1.0f - w_near);
 +  float far_shift = half_separation * (1.0f - w_far);
 +  float picture_width = std::min(picture_aspect * 9.0f / 16.0f, 1.0f);
@@ -11279,63 +11279,63 @@ index 7e92705..fa526ea 100644
 +    int32_t overlay;
 +    float scene_scale[2];
 +  } constants = {
-+      {int32_t(wfg_stereo::kEyeWidth), int32_t(wfg_stereo::kEyeHeight)},
++      {int32_t(tremu_stereo::kEyeWidth), int32_t(tremu_stereo::kEyeHeight)},
 +      near_shift,
 +      far_shift,
 +      0.5f * (1.0f - picture_width),
 +      picture_width,
 +      // A step of about three pixels: the relief is at least that wide around edges.
 +      relief_on ? std::clamp(int32_t((far_shift - near_shift) *
-+                                     float(wfg_stereo::kEyeWidth) / 3.0f) +
++                                     float(tremu_stereo::kEyeWidth) / 3.0f) +
 +                                 1,
-+                             1, kWfgStereoMaxSteps)
++                             1, kTremuStereoMaxSteps)
 +                : 0,
 +      int32_t(overlay),
-+      {float(front_width) / float(wfg_stereo::kDepthWidth),
-+       float(front_height) / float(wfg_stereo::kDepthHeight)}};
-+  static_assert(sizeof(constants) == kWfgStereoPushConstantsSize);
++      {float(front_width) / float(tremu_stereo::kDepthWidth),
++       float(front_height) / float(tremu_stereo::kDepthHeight)}};
++  static_assert(sizeof(constants) == kTremuStereoPushConstantsSize);
 +  SubmitBarriers(true);
-+  BindExternalComputePipeline(wfg_stereo_eyes_pipeline_);
++  BindExternalComputePipeline(tremu_stereo_eyes_pipeline_);
 +  if (alternate) {
 +    // This frame into its eye's half of what is kept; then all that to the output.
 +    // A swap with nothing drawn since the last one shows the same eye's frame again:
 +    // it must not reach the other eye. The game culls what is outside its own view,
 +    // which an eye sees part of: the margin is that eye's greatest shift, cropped.
 +    auto eye_constants = constants;
-+    eye_constants.near_shift = 0.5f * kWfgStereoAlternateShift * strength;
-+    const bool flat_frame = wfg_stereo_frame_flat_;
-+    eye_constants.overlay = flat_frame ? 5 : 2 + int32_t(wfg_stereo_eye_);
-+    ++wfg_stereo_swaps_;
-+    if (!wfg_stereo_frame_draws_) {
-+      ++wfg_stereo_empty_swaps_;
++    eye_constants.near_shift = 0.5f * kTremuStereoAlternateShift * strength;
++    const bool flat_frame = tremu_stereo_frame_flat_;
++    eye_constants.overlay = flat_frame ? 5 : 2 + int32_t(tremu_stereo_eye_);
++    ++tremu_stereo_swaps_;
++    if (!tremu_stereo_frame_draws_) {
++      ++tremu_stereo_empty_swaps_;
 +    }
-+    if (wfg_stereo_swaps_ == 300) {
-+      __android_log_print(ANDROID_LOG_INFO, "WFGEmu-xenia",
++    if (tremu_stereo_swaps_ == 300) {
++      __android_log_print(ANDROID_LOG_INFO, "Tremu-xenia",
 +                          "stereo: %u of %u swaps had nothing drawn",
-+                          wfg_stereo_empty_swaps_, wfg_stereo_swaps_);
-+      wfg_stereo_swaps_ = wfg_stereo_empty_swaps_ = 0;
++                          tremu_stereo_empty_swaps_, tremu_stereo_swaps_);
++      tremu_stereo_swaps_ = tremu_stereo_empty_swaps_ = 0;
 +    }
-+    const bool new_frame = wfg_stereo_frame_draws_ != 0;
-+    wfg_stereo_frame_draws_ = 0;
++    const bool new_frame = tremu_stereo_frame_draws_ != 0;
++    tremu_stereo_frame_draws_ = 0;
 +    if (new_frame) {
-+    wfg_stereo_frame_flat_ =
-+        wfg_stereo::turning.load(std::memory_order_relaxed) ||
-+        wfg_stereo::test_turning.load(std::memory_order_relaxed);
++    tremu_stereo_frame_flat_ =
++        tremu_stereo::turning.load(std::memory_order_relaxed) ||
++        tremu_stereo::test_turning.load(std::memory_order_relaxed);
 +    if (!flat_frame) {
-+      wfg_stereo_eye_ ^= 1;
++      tremu_stereo_eye_ ^= 1;
 +    }
 +    const auto ease_now = std::chrono::steady_clock::now();
-+    wfg_stereo_ease_ =
-+        wfg_stereo_frame_flat_
++    tremu_stereo_ease_ =
++        tremu_stereo_frame_flat_
 +            ? 0.0f
 +            : std::min(
-+                  wfg_stereo_ease_ +
-+                      std::chrono::duration<float>(ease_now - wfg_stereo_ease_time_)
++                  tremu_stereo_ease_ +
++                      std::chrono::duration<float>(ease_now - tremu_stereo_ease_time_)
 +                              .count() /
-+                          kWfgStereoEaseSeconds,
++                          kTremuStereoEaseSeconds,
 +                  1.0f);
-+    wfg_stereo_ease_time_ = ease_now;
-+    PushImageMemoryBarrier(wfg_stereo_images_[5], subresources,
++    tremu_stereo_ease_time_ = ease_now;
++    PushImageMemoryBarrier(tremu_stereo_images_[5], subresources,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_ACCESS_SHADER_READ_BIT,
@@ -11343,16 +11343,16 @@ index 7e92705..fa526ea 100644
 +                           VK_IMAGE_LAYOUT_GENERAL);
 +    SubmitBarriers(true);
 +    deferred_command_buffer_.CmdVkBindDescriptorSets(
-+        VK_PIPELINE_BIND_POINT_COMPUTE, wfg_stereo_layout_, 0, 1, &hold_set, 0,
++        VK_PIPELINE_BIND_POINT_COMPUTE, tremu_stereo_layout_, 0, 1, &hold_set, 0,
 +        nullptr);
 +    deferred_command_buffer_.CmdVkPushConstants(
-+        wfg_stereo_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
++        tremu_stereo_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
 +        sizeof(eye_constants), &eye_constants);
 +    ++submission_in_progress_.dispatch_count;
 +    deferred_command_buffer_.CmdVkDispatch(
-+        (2 * wfg_stereo::kEyeWidth + 15) / 16, (wfg_stereo::kEyeHeight + 7) / 8,
++        (2 * tremu_stereo::kEyeWidth + 15) / 16, (tremu_stereo::kEyeHeight + 7) / 8,
 +        1);
-+    PushImageMemoryBarrier(wfg_stereo_images_[5], subresources,
++    PushImageMemoryBarrier(tremu_stereo_images_[5], subresources,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                           VK_ACCESS_SHADER_WRITE_BIT,
@@ -11361,25 +11361,25 @@ index 7e92705..fa526ea 100644
 +    SubmitBarriers(true);
 +    }
 +    deferred_command_buffer_.CmdVkBindDescriptorSets(
-+        VK_PIPELINE_BIND_POINT_COMPUTE, wfg_stereo_layout_, 0, 1, &set, 0,
++        VK_PIPELINE_BIND_POINT_COMPUTE, tremu_stereo_layout_, 0, 1, &set, 0,
 +        nullptr);
 +    eye_constants.overlay = 4;
 +    deferred_command_buffer_.CmdVkPushConstants(
-+        wfg_stereo_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
++        tremu_stereo_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
 +        sizeof(eye_constants), &eye_constants);
 +  } else {
 +    deferred_command_buffer_.CmdVkPushConstants(
-+        wfg_stereo_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants),
++        tremu_stereo_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants),
 +        &constants);
 +  }
 +  ++submission_in_progress_.dispatch_count;
-+  deferred_command_buffer_.CmdVkDispatch((2 * wfg_stereo::kEyeWidth + 15) / 16,
-+                                         (wfg_stereo::kEyeHeight + 7) / 8, 1);
-+  if (wfg_stereo_queries_) {
++  deferred_command_buffer_.CmdVkDispatch((2 * tremu_stereo::kEyeWidth + 15) / 16,
++                                         (tremu_stereo::kEyeHeight + 7) / 8, 1);
++  if (tremu_stereo_queries_) {
 +    deferred_command_buffer_.CmdVkWriteTimestamp(
-+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, wfg_stereo_queries_,
++        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, tremu_stereo_queries_,
 +        2 * frame_index + 1);
-+    wfg_stereo_queries_written_[frame_index] = true;
++    tremu_stereo_queries_written_[frame_index] = true;
 +  }
 +}
 +
@@ -11390,7 +11390,7 @@ index 7e92705..fa526ea 100644
    // Count one presented guest frame for the debug overlay's FPS / frame-time
    // stats (the game's real frame rate, independent of the host present path).
    xe::RecordGuestPresent();
-+  wfg_debug::OnSwap();
++  tremu_debug::OnSwap();
  
    if (render_target_cache_) {
      render_target_cache_->LogResolveDetailsOnFrameEnd();
@@ -11398,33 +11398,33 @@ index 7e92705..fa526ea 100644
  
    auto aspect = graphics_system_->GetScaledAspectRatio();
  
-+  // WFGEmu stereo: the guest output holds the eyes side by side, each one the
++  // Tremu stereo: the guest output holds the eyes side by side, each one the
 +  // size of the surface's half whatever the size of the front buffer.
-+  bool wfg_stereo_on =
-+      wfg_stereo::enabled.load(std::memory_order_relaxed) &&
-+      WfgStereoInitialize();
-+  if (wfg_stereo_on) {
-+    wfg_stereo_main_width_ = frontbuffer_width;
++  bool tremu_stereo_on =
++      tremu_stereo::enabled.load(std::memory_order_relaxed) &&
++      TremuStereoInitialize();
++  if (tremu_stereo_on) {
++    tremu_stereo_main_width_ = frontbuffer_width;
 +    int32_t depth_rect[4];
 +    bool depth_fresh;
-+    wfg_stereo_has_depth_ = render_target_cache_->WfgStereoEndFrame(
++    tremu_stereo_has_depth_ = render_target_cache_->TremuStereoEndFrame(
 +        frontbuffer_width_scaled, frontbuffer_height_scaled, depth_rect,
-+        depth_fresh, wfg_stereo_overlay_);
++        depth_fresh, tremu_stereo_overlay_);
 +    if (depth_fresh) {
-+      std::memcpy(wfg_stereo_rect_, depth_rect, sizeof(depth_rect));
-+      wfg_stereo_fresh_ = true;
++      std::memcpy(tremu_stereo_rect_, depth_rect, sizeof(depth_rect));
++      tremu_stereo_fresh_ = true;
 +    }
 +  }
 +
    presenter->RefreshGuestOutput(
 -      frontbuffer_width_scaled, frontbuffer_height_scaled, aspect.first,
 -      aspect.second,
-+      wfg_stereo_on ? 2 * wfg_stereo::kEyeWidth : frontbuffer_width_scaled,
-+      wfg_stereo_on ? wfg_stereo::kEyeHeight : frontbuffer_height_scaled,
-+      wfg_stereo_on ? 32 : aspect.first, wfg_stereo_on ? 9 : aspect.second,
++      tremu_stereo_on ? 2 * tremu_stereo::kEyeWidth : frontbuffer_width_scaled,
++      tremu_stereo_on ? tremu_stereo::kEyeHeight : frontbuffer_height_scaled,
++      tremu_stereo_on ? 32 : aspect.first, tremu_stereo_on ? 9 : aspect.second,
        [this, frontbuffer_width_scaled, frontbuffer_height_scaled,
 -       frontbuffer_format, swap_texture_view](
-+       frontbuffer_format, swap_texture_view, wfg_stereo_on, aspect](
++       frontbuffer_format, swap_texture_view, tremu_stereo_on, aspect](
            ui::Presenter::GuestOutputRefreshContext& context) -> bool {
          // In case the swap command is the only one in the frame.
          if (!BeginSubmission(true)) {
@@ -11432,11 +11432,11 @@ index 7e92705..fa526ea 100644
                  xenos::TextureFormat::k_2_10_10_10_AS_16_16_16_16;
  
          SwapPostEffect swap_post_effect = GetActualSwapPostEffect();
-+        // WFGEmu stereo takes the place of FXAA, with the same source image.
++        // Tremu stereo takes the place of FXAA, with the same source image.
          bool use_fxaa = swap_post_effect == SwapPostEffect::kFxaa ||
 -                        swap_post_effect == SwapPostEffect::kFxaaExtreme;
 +                        swap_post_effect == SwapPostEffect::kFxaaExtreme ||
-+                        wfg_stereo_on;
++                        tremu_stereo_on;
  
          if (use_fxaa) {
            // Make sure the texture of the correct size is available for FXAA.
@@ -11445,7 +11445,7 @@ index 7e92705..fa526ea 100644
  
          // FXAA can result in more than 8 bits of precision.
 -        context.SetIs8bpc(!use_pwl_gamma_ramp && !use_fxaa);
-+        context.SetIs8bpc(!use_pwl_gamma_ramp && (!use_fxaa || wfg_stereo_on));
++        context.SetIs8bpc(!use_pwl_gamma_ramp && (!use_fxaa || tremu_stereo_on));
  
          // Update the gamma ramp if it's out of date.
          uint32_t& gamma_ramp_frame_index_ref =
@@ -11453,8 +11453,8 @@ index 7e92705..fa526ea 100644
            }
            SubmitBarriers(true);
  
-+          if (wfg_stereo_on) {
-+            WfgStereoDrawEyes(
++          if (tremu_stereo_on) {
++            TremuStereoDrawEyes(
 +                vulkan_context.image_view(), swap_frame_index,
 +                float(aspect.first) / float(aspect.second),
 +                frontbuffer_width_scaled, frontbuffer_height_scaled,
@@ -11477,10 +11477,10 @@ index 7e92705..fa526ea 100644
    return pipeline_cache_->LoadShader(shader_type, host_address, dword_count);
  }
  
-+// WFGEmu rendering investigation (Fallout 3 hair): controlled by files in this folder, which only
++// Tremu rendering investigation (Fallout 3 hair): controlled by files in this folder, which only
 +// exists on a test headset. "dump": the next frame's draw states go to frames.txt. "skip.txt": pixel
 +// shader hashes (hex, one per line) whose draws are not issued, to find what draws what.
-+namespace wfg_debug {
++namespace tremu_debug {
 +constexpr const char* kFolder = "/storage/emulated/0/Tremu/bios/xenia/debug/";
 +FILE* log_file = nullptr;
 +uint32_t draw_index = 0;
@@ -11579,7 +11579,7 @@ index 7e92705..fa526ea 100644
 +  }
 +  return ps && skipped.count(ps_hash) != 0;
 +}
-+}  // namespace wfg_debug
++}  // namespace tremu_debug
 +
  bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                                         uint32_t index_count,
@@ -11588,7 +11588,7 @@ index 7e92705..fa526ea 100644
          pixel_shader ? draw_util::GetNormalizedColorMask(
                             regs, pixel_shader->writes_color_targets())
                       : 0;
-+    if (wfg_debug::OnDraw(regs, prim_type, index_count, vertex_shader, pixel_shader,
++    if (tremu_debug::OnDraw(regs, prim_type, index_count, vertex_shader, pixel_shader,
 +                          normalized_depth_control, normalized_color_mask)) {
 +      return true;
 +    }
@@ -11599,7 +11599,7 @@ index 7e92705..fa526ea 100644
  #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
    SCOPE_profile_cpu_f("gpu");
  #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
-+  wfg_debug::OnCopy(*register_file_);
++  tremu_debug::OnCopy(*register_file_);
  
    if (!BeginSubmission(true)) {
      return false;
@@ -11607,33 +11607,33 @@ index 7e92705..fa526ea 100644
      system_constants_.ndc_offset[i] = viewport_info.ndc_offset[i];
    }
  
-+  // WFGEmu stereo: this frame's eye, for what is drawn to the game's picture.
-+  float wfg_eye_shift = 0.0f;
-+  if (wfg_stereo::enabled.load(std::memory_order_relaxed) &&
-+      wfg_stereo::alternate.load(std::memory_order_relaxed) &&
++  // Tremu stereo: this frame's eye, for what is drawn to the game's picture.
++  float tremu_eye_shift = 0.0f;
++  if (tremu_stereo::enabled.load(std::memory_order_relaxed) &&
++      tremu_stereo::alternate.load(std::memory_order_relaxed) &&
 +      regs.Get<reg::RB_SURFACE_INFO>().surface_pitch * 10 >=
-+          wfg_stereo_main_width_ * 9) {
-+    ++wfg_stereo_frame_draws_;
-+    if (!wfg_stereo_frame_flat_) {
-+      wfg_eye_shift =
-+          (wfg_stereo_eye_ ? kWfgStereoAlternateShift
-+                           : -kWfgStereoAlternateShift) *
-+          float(wfg_stereo::percent.load(std::memory_order_relaxed)) / 100.0f *
-+          viewport_info.ndc_scale[0] * wfg_stereo_ease_ * wfg_stereo_ease_ *
-+          (3.0f - 2.0f * wfg_stereo_ease_);
++          tremu_stereo_main_width_ * 9) {
++    ++tremu_stereo_frame_draws_;
++    if (!tremu_stereo_frame_flat_) {
++      tremu_eye_shift =
++          (tremu_stereo_eye_ ? kTremuStereoAlternateShift
++                           : -kTremuStereoAlternateShift) *
++          float(tremu_stereo::percent.load(std::memory_order_relaxed)) / 100.0f *
++          viewport_info.ndc_scale[0] * tremu_stereo_ease_ * tremu_stereo_ease_ *
++          (3.0f - 2.0f * tremu_stereo_ease_);
 +    }
 +  }
-+  float wfg_convergence = wfg_stereo::convergence.load(std::memory_order_relaxed);
-+  dirty |= system_constants_.wfg_eye_shift != wfg_eye_shift;
-+  dirty |= system_constants_.wfg_convergence != wfg_convergence;
-+  system_constants_.wfg_eye_shift = wfg_eye_shift;
-+  system_constants_.wfg_convergence = wfg_convergence;
++  float tremu_convergence = tremu_stereo::convergence.load(std::memory_order_relaxed);
++  dirty |= system_constants_.tremu_eye_shift != tremu_eye_shift;
++  dirty |= system_constants_.tremu_convergence != tremu_convergence;
++  system_constants_.tremu_eye_shift = tremu_eye_shift;
++  system_constants_.tremu_convergence = tremu_convergence;
 +
    // User clip planes, for vertex and domain shaders.
    auto pa_cl_clip_cntl = regs.Get<reg::PA_CL_CLIP_CNTL>();
    if (!pa_cl_clip_cntl.clip_disable && pa_cl_clip_cntl.ucp_ena) {
 diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_command_processor.h b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_command_processor.h
-index be82cea..41cda12 100644
+index be82cea..140e754 100644
 --- a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_command_processor.h
 +++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_command_processor.h
 @@ -10,6 +10,7 @@
@@ -11648,13 +11648,13 @@ index be82cea..41cda12 100644
                                      bool keep_dynamic_blend_constants = false,
                                      bool keep_dynamic_stencil_mask_ref = false);
    void BindExternalComputePipeline(VkPipeline pipeline);
-+  // WFGEmu stereo: a rectangle of a depth render target to the depth image.
-+  bool WfgStereoCaptureDepth(VkDescriptorSet depth_source, bool multisampled,
++  // Tremu stereo: a rectangle of a depth render target to the depth image.
++  bool TremuStereoCaptureDepth(VkDescriptorSet depth_source, bool multisampled,
 +                             int32_t source_x, int32_t source_y, int32_t dest_x,
 +                             int32_t dest_y, int32_t width, int32_t height,
 +                             bool reverse_z, bool merge);
 +  // The frame as it is before the HUD, from a color render target.
-+  bool WfgStereoCapturePicture(VkDescriptorSet color_source, bool multisampled,
++  bool TremuStereoCapturePicture(VkDescriptorSet color_source, bool multisampled,
 +                               int32_t width, int32_t height);
    void SetViewport(const VkViewport& viewport);
    void SetScissor(const VkRect2D& scissor);
@@ -11663,69 +11663,69 @@ index be82cea..41cda12 100644
    std::array<VkDescriptorSet, kMaxFramesInFlight>
        fxaa_source_storage_descriptors_;
  
-+  // WFGEmu stereo: the front buffer goes through the FXAA source image, then the
++  // Tremu stereo: the front buffer goes through the FXAA source image, then the
 +  // eyes are made from it and the frame's depth, side by side in the guest output.
-+  bool WfgStereoInitialize();
-+  void WfgStereoShutdown();
-+  void WfgStereoPrepareImages();
-+  void WfgStereoDrawEyes(VkImageView guest_output_view, uint32_t frame_index,
++  bool TremuStereoInitialize();
++  void TremuStereoShutdown();
++  void TremuStereoPrepareImages();
++  void TremuStereoDrawEyes(VkImageView guest_output_view, uint32_t frame_index,
 +                         float picture_aspect, uint32_t front_width,
 +                         uint32_t front_height, VkPipeline gamma_pipeline,
 +                         VkDescriptorSet gamma_ramp);
-+  bool wfg_stereo_ready_ = false, wfg_stereo_failed_ = false;
-+  bool wfg_stereo_images_prepared_ = false;
-+  bool wfg_stereo_has_depth_ = false, wfg_stereo_fresh_ = false;
-+  bool wfg_stereo_overlay_ = false;
++  bool tremu_stereo_ready_ = false, tremu_stereo_failed_ = false;
++  bool tremu_stereo_images_prepared_ = false;
++  bool tremu_stereo_has_depth_ = false, tremu_stereo_fresh_ = false;
++  bool tremu_stereo_overlay_ = false;
 +  // GPU time of the passes made at the swap, two timestamps per frame in flight.
-+  VkQueryPool wfg_stereo_queries_ = VK_NULL_HANDLE;
-+  std::array<bool, kMaxFramesInFlight> wfg_stereo_queries_written_{};
-+  double wfg_stereo_gpu_ms_ = 0.0;
-+  uint32_t wfg_stereo_gpu_samples_ = 0;
-+  VkPipelineLayout wfg_stereo_picture_layout_ = VK_NULL_HANDLE;
-+  VkPipeline wfg_stereo_picture_pipeline_ = VK_NULL_HANDLE;
-+  VkPipeline wfg_stereo_picture_ms_pipeline_ = VK_NULL_HANDLE;
-+  VkDescriptorSet wfg_stereo_picture_set_ = VK_NULL_HANDLE;
-+  VkDescriptorSet wfg_stereo_scene_source_set_ = VK_NULL_HANDLE;
-+  VkDescriptorSet wfg_stereo_scene_dest_set_ = VK_NULL_HANDLE;
-+  bool wfg_stereo_range_valid_ = false;
-+  int32_t wfg_stereo_rect_[4] = {};
-+  VkDescriptorSetLayout wfg_stereo_capture_set_layout_ = VK_NULL_HANDLE;
-+  VkDescriptorSetLayout wfg_stereo_set_layout_ = VK_NULL_HANDLE;
-+  VkPipelineLayout wfg_stereo_capture_layout_ = VK_NULL_HANDLE;
-+  VkPipelineLayout wfg_stereo_layout_ = VK_NULL_HANDLE;
-+  VkDescriptorPool wfg_stereo_pool_ = VK_NULL_HANDLE;
-+  VkDescriptorSet wfg_stereo_capture_set_ = VK_NULL_HANDLE;
-+  std::array<VkDescriptorSet, kMaxFramesInFlight> wfg_stereo_sets_{};
-+  VkPipeline wfg_stereo_capture_pipeline_ = VK_NULL_HANDLE;
-+  VkPipeline wfg_stereo_capture_ms_pipeline_ = VK_NULL_HANDLE;
-+  VkPipeline wfg_stereo_range_pipeline_ = VK_NULL_HANDLE;
-+  VkPipeline wfg_stereo_relief_pipeline_ = VK_NULL_HANDLE;
-+  VkPipeline wfg_stereo_eyes_pipeline_ = VK_NULL_HANDLE;
++  VkQueryPool tremu_stereo_queries_ = VK_NULL_HANDLE;
++  std::array<bool, kMaxFramesInFlight> tremu_stereo_queries_written_{};
++  double tremu_stereo_gpu_ms_ = 0.0;
++  uint32_t tremu_stereo_gpu_samples_ = 0;
++  VkPipelineLayout tremu_stereo_picture_layout_ = VK_NULL_HANDLE;
++  VkPipeline tremu_stereo_picture_pipeline_ = VK_NULL_HANDLE;
++  VkPipeline tremu_stereo_picture_ms_pipeline_ = VK_NULL_HANDLE;
++  VkDescriptorSet tremu_stereo_picture_set_ = VK_NULL_HANDLE;
++  VkDescriptorSet tremu_stereo_scene_source_set_ = VK_NULL_HANDLE;
++  VkDescriptorSet tremu_stereo_scene_dest_set_ = VK_NULL_HANDLE;
++  bool tremu_stereo_range_valid_ = false;
++  int32_t tremu_stereo_rect_[4] = {};
++  VkDescriptorSetLayout tremu_stereo_capture_set_layout_ = VK_NULL_HANDLE;
++  VkDescriptorSetLayout tremu_stereo_set_layout_ = VK_NULL_HANDLE;
++  VkPipelineLayout tremu_stereo_capture_layout_ = VK_NULL_HANDLE;
++  VkPipelineLayout tremu_stereo_layout_ = VK_NULL_HANDLE;
++  VkDescriptorPool tremu_stereo_pool_ = VK_NULL_HANDLE;
++  VkDescriptorSet tremu_stereo_capture_set_ = VK_NULL_HANDLE;
++  std::array<VkDescriptorSet, kMaxFramesInFlight> tremu_stereo_sets_{};
++  VkPipeline tremu_stereo_capture_pipeline_ = VK_NULL_HANDLE;
++  VkPipeline tremu_stereo_capture_ms_pipeline_ = VK_NULL_HANDLE;
++  VkPipeline tremu_stereo_range_pipeline_ = VK_NULL_HANDLE;
++  VkPipeline tremu_stereo_relief_pipeline_ = VK_NULL_HANDLE;
++  VkPipeline tremu_stereo_eyes_pipeline_ = VK_NULL_HANDLE;
 +  // Nearness, the relief under the picture, the range of nearness, the frame before
 +  // the HUD as the render target had it, that after the gamma ramp, and the last
 +  // frame of each eye side by side.
-+  std::array<VkImage, 6> wfg_stereo_images_{};
-+  std::array<VkImageView, 6> wfg_stereo_views_{};
-+  std::array<VkDeviceMemory, 6> wfg_stereo_memory_{};
-+  std::array<VkDescriptorSet, kMaxFramesInFlight> wfg_stereo_hold_sets_{};
++  std::array<VkImage, 6> tremu_stereo_images_{};
++  std::array<VkImageView, 6> tremu_stereo_views_{};
++  std::array<VkDeviceMemory, 6> tremu_stereo_memory_{};
++  std::array<VkDescriptorSet, kMaxFramesInFlight> tremu_stereo_hold_sets_{};
 +  // Alternate frames: whose frame is being drawn (0 left), and how wide the game's
 +  // picture is, which tells it from a shadow map or a reflection.
-+  uint32_t wfg_stereo_eye_ = 0;
-+  uint32_t wfg_stereo_main_width_ = 0;
++  uint32_t tremu_stereo_eye_ = 0;
++  uint32_t tremu_stereo_main_width_ = 0;
 +  // Drawn to the game's picture since the last swap, and swaps that had none.
-+  uint32_t wfg_stereo_frame_draws_ = 0;
++  uint32_t tremu_stereo_frame_draws_ = 0;
 +  // The frame being drawn is for both eyes, from the middle.
-+  bool wfg_stereo_frame_flat_ = false;
++  bool tremu_stereo_frame_flat_ = false;
 +  // How far the relief has come back since the last flat frame, 0 to 1.
-+  float wfg_stereo_ease_ = 0.0f;
-+  std::chrono::steady_clock::time_point wfg_stereo_ease_time_{};
-+  uint32_t wfg_stereo_swaps_ = 0, wfg_stereo_empty_swaps_ = 0;
++  float tremu_stereo_ease_ = 0.0f;
++  std::chrono::steady_clock::time_point tremu_stereo_ease_time_{};
++  uint32_t tremu_stereo_swaps_ = 0, tremu_stereo_empty_swaps_ = 0;
 +
    // Pending pipeline barriers.
    std::vector<VkBufferMemoryBarrier> pending_barriers_buffer_memory_barriers_;
    std::vector<VkImageMemoryBarrier> pending_barriers_image_memory_barriers_;
 diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc
-index 88f2eb0..160a9ec 100644
+index 88f2eb0..a75588c 100644
 --- a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc
 +++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc
 @@ -9,6 +9,9 @@
@@ -11742,8 +11742,8 @@ index 88f2eb0..160a9ec 100644
  }
  
  void VulkanRenderTargetCache::ClearCache() {
-+  wfg_depth_rt_ = nullptr;
-+  wfg_capture_rt_ = nullptr;
++  tremu_depth_rt_ = nullptr;
++  tremu_capture_rt_ = nullptr;
    const ui::vulkan::VulkanDevice* const vulkan_device =
        command_processor_.GetVulkanDevice();
    const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
@@ -11754,12 +11754,12 @@ index 88f2eb0..160a9ec 100644
 +// A resolve is about the size of the picture: what the depth buffer holds under
 +// it goes to the depth image, at the place on screen. With predicated tiling the
 +// window offset says which tile this is, and the tiles add up to the screen.
-+void VulkanRenderTargetCache::WfgStereoCapture(
++void VulkanRenderTargetCache::TremuStereoCapture(
 +    const draw_util::ResolveInfo& info) {
-+  if (!wfg_stereo::enabled.load(std::memory_order_relaxed)) {
++  if (!tremu_stereo::enabled.load(std::memory_order_relaxed)) {
 +    return;
 +  }
-+  if (wfg_test_no_capture_) {
++  if (tremu_test_no_capture_) {
 +    return;
 +  }
 +  bool clears_depth = info.rb_copy_control.depth_clear_enable != 0;
@@ -11767,11 +11767,11 @@ index 88f2eb0..160a9ec 100644
 +  int32_t height = int32_t(info.height_div_8) << 3;
 +  // Not a downscale, a bloom, a shadow map.
 +  if (GetPath() == Path::kHostRenderTargets && !IsDrawResolutionScaled() &&
-+      wfg_depth_rt_ && wfg_writes_ && !HasPendingDrawPassTransfers() &&
-+      uint32_t(width) * 5 >= wfg_front_width_ * 3 &&
-+      uint32_t(height) * 10 <= wfg_front_height_ * 11) {
++      tremu_depth_rt_ && tremu_writes_ && !HasPendingDrawPassTransfers() &&
++      uint32_t(width) * 5 >= tremu_front_width_ * 3 &&
++      uint32_t(height) * 10 <= tremu_front_height_ * 11) {
 +    auto window_offset = register_file().Get<reg::PA_SC_WINDOW_OFFSET>();
-+    RenderTargetKey key = wfg_depth_rt_->key();
++    RenderTargetKey key = tremu_depth_rt_->key();
 +    int32_t source_x = int32_t(info.copy_dest_x0);
 +    int32_t source_y = int32_t(info.copy_dest_y0);
 +    int32_t dest_x = source_x - window_offset.window_x_offset;
@@ -11784,24 +11784,24 @@ index 88f2eb0..160a9ec 100644
 +    dest_y += clip_y;
 +    width = std::min(width - clip_x,
 +                     std::min(int32_t(key.GetWidth()) - source_x,
-+                              int32_t(wfg_stereo::kDepthWidth) - dest_x));
++                              int32_t(tremu_stereo::kDepthWidth) - dest_x));
 +    height = std::min(
 +        height - clip_y,
 +        std::min(int32_t(GetRenderTargetHeight(key.pitch_tiles_at_32bpp,
 +                                               key.msaa_samples)) -
 +                     source_y,
-+                 int32_t(wfg_stereo::kDepthHeight) - dest_y));
-+    bool first = !wfg_frame_writes_;
-+    bool covered = !first && dest_x >= wfg_rect_[0] && dest_y >= wfg_rect_[1] &&
-+                   dest_x + width <= wfg_rect_[2] &&
-+                   dest_y + height <= wfg_rect_[3];
-+    bool same = wfg_depth_rt_ == wfg_capture_rt_;
++                 int32_t(tremu_stereo::kDepthHeight) - dest_y));
++    bool first = !tremu_frame_writes_;
++    bool covered = !first && dest_x >= tremu_rect_[0] && dest_y >= tremu_rect_[1] &&
++                   dest_x + width <= tremu_rect_[2] &&
++                   dest_y + height <= tremu_rect_[3];
++    bool same = tremu_depth_rt_ == tremu_capture_rt_;
 +    // After the scene: a few draws in another buffer (hair, glass) or over a
 +    // cleared one. They add to it, whatever else that buffer holds or lacks.
-+    bool minor = !first && wfg_writes_ * 8 < wfg_frame_writes_ &&
-+                 (!same || (wfg_depth_cleared_ && covered));
++    bool minor = !first && tremu_writes_ * 8 < tremu_frame_writes_ &&
++                 (!same || (tremu_depth_cleared_ && covered));
 +    if (width > 0 && height > 0) {
-+      auto& vulkan_rt = *static_cast<VulkanRenderTarget*>(wfg_depth_rt_);
++      auto& vulkan_rt = *static_cast<VulkanRenderTarget*>(tremu_depth_rt_);
 +      command_processor_.PushImageMemoryBarrier(
 +          vulkan_rt.image(),
 +          ui::vulkan::util::InitializeSubresourceRange(
@@ -11812,45 +11812,45 @@ index 88f2eb0..160a9ec 100644
 +      vulkan_rt.SetUsage(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                         VK_ACCESS_SHADER_READ_BIT,
 +                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-+      if (command_processor_.WfgStereoCaptureDepth(
++      if (command_processor_.TremuStereoCaptureDepth(
 +              vulkan_rt.GetDescriptorSetTransferSource(),
 +              key.msaa_samples != xenos::MsaaSamples::k1X, source_x, source_y,
-+              dest_x, dest_y, width, height, wfg_reverse_z_, minor)) {
++              dest_x, dest_y, width, height, tremu_reverse_z_, minor)) {
 +        if (!minor) {
 +          if (first || !same) {
-+            wfg_rect_[0] = dest_x;
-+            wfg_rect_[1] = dest_y;
-+            wfg_rect_[2] = dest_x + width;
-+            wfg_rect_[3] = dest_y + height;
-+            wfg_frame_writes_ = 0;
++            tremu_rect_[0] = dest_x;
++            tremu_rect_[1] = dest_y;
++            tremu_rect_[2] = dest_x + width;
++            tremu_rect_[3] = dest_y + height;
++            tremu_frame_writes_ = 0;
 +          } else {
-+            wfg_rect_[0] = std::min(wfg_rect_[0], dest_x);
-+            wfg_rect_[1] = std::min(wfg_rect_[1], dest_y);
-+            wfg_rect_[2] = std::max(wfg_rect_[2], dest_x + width);
-+            wfg_rect_[3] = std::max(wfg_rect_[3], dest_y + height);
++            tremu_rect_[0] = std::min(tremu_rect_[0], dest_x);
++            tremu_rect_[1] = std::min(tremu_rect_[1], dest_y);
++            tremu_rect_[2] = std::max(tremu_rect_[2], dest_x + width);
++            tremu_rect_[3] = std::max(tremu_rect_[3], dest_y + height);
 +          }
-+          wfg_capture_rt_ = wfg_depth_rt_;
-+          wfg_depth_cleared_ = false;
++          tremu_capture_rt_ = tremu_depth_rt_;
++          tremu_depth_cleared_ = false;
 +        }
-+        wfg_frame_writes_ += wfg_writes_;
-+        wfg_writes_ = 0;
-+        wfg_overlay_armed_ = true;
++        tremu_frame_writes_ += tremu_writes_;
++        tremu_writes_ = 0;
++        tremu_overlay_armed_ = true;
 +      }
 +    }
 +  }
 +  if (clears_depth) {
-+    wfg_depth_cleared_ = true;
++    tremu_depth_cleared_ = true;
 +  }
 +}
 +
-+void VulkanRenderTargetCache::WfgStereoNoteOverlayDraw(RenderTarget* color,
++void VulkanRenderTargetCache::TremuStereoNoteOverlayDraw(RenderTarget* color,
 +                                                       bool blends) {
 +  RenderTargetKey key = color->key();
-+  if (key.GetWidth() < wfg_front_width_ || IsDrawResolutionScaled() ||
++  if (key.GetWidth() < tremu_front_width_ || IsDrawResolutionScaled() ||
 +      GetRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples) <
-+          wfg_front_height_ ||
-+      wfg_front_width_ > wfg_stereo::kDepthWidth ||
-+      wfg_front_height_ > wfg_stereo::kDepthHeight) {
++          tremu_front_height_ ||
++      tremu_front_width_ > tremu_stereo::kDepthWidth ||
++      tremu_front_height_ > tremu_stereo::kDepthHeight) {
 +    return;
 +  }
 +  xenos::ColorRenderTargetFormat format = key.GetColorFormat();
@@ -11861,14 +11861,14 @@ index 88f2eb0..160a9ec 100644
 +    return;
 +  }
 +  if (!blends) {
-+    wfg_overlay_armed_ = true;
++    tremu_overlay_armed_ = true;
 +    return;
 +  }
-+  if (wfg_test_no_capture_ || !wfg_overlay_armed_ || !wfg_frame_writes_ ||
++  if (tremu_test_no_capture_ || !tremu_overlay_armed_ || !tremu_frame_writes_ ||
 +      HasPendingDrawPassTransfers()) {
 +    return;
 +  }
-+  wfg_overlay_armed_ = false;
++  tremu_overlay_armed_ = false;
 +  auto& vulkan_rt = *static_cast<VulkanRenderTarget*>(color);
 +  VkImageSubresourceRange subresources =
 +      ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT);
@@ -11880,10 +11880,10 @@ index 88f2eb0..160a9ec 100644
 +  vulkan_rt.SetUsage(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 +                     VK_ACCESS_SHADER_READ_BIT,
 +                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-+  wfg_overlay_copied_ |= command_processor_.WfgStereoCapturePicture(
++  tremu_overlay_copied_ |= command_processor_.TremuStereoCapturePicture(
 +      vulkan_rt.GetDescriptorSetTransferSource(),
-+      key.msaa_samples != xenos::MsaaSamples::k1X, int32_t(wfg_front_width_),
-+      int32_t(wfg_front_height_));
++      key.msaa_samples != xenos::MsaaSamples::k1X, int32_t(tremu_front_width_),
++      int32_t(tremu_front_height_));
 +  // Back for the draw this update is for.
 +  VkPipelineStageFlags draw_stage_mask;
 +  VkAccessFlags draw_access_mask;
@@ -11896,62 +11896,62 @@ index 88f2eb0..160a9ec 100644
 +  vulkan_rt.SetUsage(draw_stage_mask, draw_access_mask, draw_layout);
 +}
 +
-+bool VulkanRenderTargetCache::WfgStereoEndFrame(uint32_t front_width,
++bool VulkanRenderTargetCache::TremuStereoEndFrame(uint32_t front_width,
 +                                                uint32_t front_height,
 +                                                int32_t rect_out[4],
 +                                                bool& fresh_out,
 +                                                bool& overlay_out) {
-+  wfg_front_width_ = front_width;
-+  wfg_front_height_ = front_height;
-+  fresh_out = wfg_frame_writes_ != 0;
-+  overlay_out = wfg_overlay_copied_;
-+  wfg_overlay_copied_ = false;
-+  wfg_overlay_armed_ = true;
++  tremu_front_width_ = front_width;
++  tremu_front_height_ = front_height;
++  fresh_out = tremu_frame_writes_ != 0;
++  overlay_out = tremu_overlay_copied_;
++  tremu_overlay_copied_ = false;
++  tremu_overlay_armed_ = true;
 +  if (fresh_out) {
-+    std::memcpy(rect_out, wfg_rect_, sizeof(wfg_rect_));
-+    wfg_frames_without_depth_ = 0;
-+  } else if (wfg_frames_without_depth_ < UINT32_MAX / 2) {
-+    ++wfg_frames_without_depth_;
++    std::memcpy(rect_out, tremu_rect_, sizeof(tremu_rect_));
++    tremu_frames_without_depth_ = 0;
++  } else if (tremu_frames_without_depth_ < UINT32_MAX / 2) {
++    ++tremu_frames_without_depth_;
 +  }
 +  static uint32_t frames;
 +  // Test: creating debug/nocapture stops the copies of depth and of the scene.
 +  if (frames % 15 == 0) {
 +    struct stat st;
 +    // Test: debug/relief goes back to the eyes from depth, debug/conv holds a convergence.
-+    wfg_stereo::test_turning =
++    tremu_stereo::test_turning =
 +        stat("/storage/emulated/0/Tremu/bios/xenia/debug/turn", &st) == 0;
-+    wfg_stereo::alternate =
++    tremu_stereo::alternate =
 +        stat("/storage/emulated/0/Tremu/bios/xenia/debug/relief", &st) != 0;
 +    if (FILE* conv = fopen("/storage/emulated/0/Tremu/bios/xenia/debug/conv", "r")) {
 +      float value;
 +      if (fscanf(conv, "%f", &value) == 1) {
-+        wfg_stereo::convergence = value;
++        tremu_stereo::convergence = value;
 +      }
 +      fclose(conv);
 +    }
 +    bool no_capture =
-+        wfg_stereo::alternate ||
++        tremu_stereo::alternate ||
 +        !stat("/storage/emulated/0/Tremu/bios/xenia/debug/nocapture", &st);
-+    if (no_capture != wfg_test_no_capture_) {
-+      __android_log_print(ANDROID_LOG_INFO, "WFGEmu-xenia", "stereo: captures %s",
++    if (no_capture != tremu_test_no_capture_) {
++      __android_log_print(ANDROID_LOG_INFO, "Tremu-xenia", "stereo: captures %s",
 +                          no_capture ? "off" : "on");
-+      wfg_test_no_capture_ = no_capture;
++      tremu_test_no_capture_ = no_capture;
 +    }
 +  }
 +  if (++frames % 300 == 0) {
 +    __android_log_print(
-+        ANDROID_LOG_INFO, "WFGEmu-xenia",
++        ANDROID_LOG_INFO, "Tremu-xenia",
 +        "stereo: front %ux%u, overlay %d, depth %s, %d,%d-%d,%d, %u writes, %s Z, %s", front_width,
-+        front_height, int(overlay_out), fresh_out ? "fresh" : "old", wfg_rect_[0], wfg_rect_[1],
-+        wfg_rect_[2], wfg_rect_[3], wfg_frame_writes_,
-+        wfg_reverse_z_ ? "reverse" : "normal",
-+        wfg_capture_rt_ ? wfg_capture_rt_->key().GetDebugName().c_str() : "no target");
++        front_height, int(overlay_out), fresh_out ? "fresh" : "old", tremu_rect_[0], tremu_rect_[1],
++        tremu_rect_[2], tremu_rect_[3], tremu_frame_writes_,
++        tremu_reverse_z_ ? "reverse" : "normal",
++        tremu_capture_rt_ ? tremu_capture_rt_->key().GetDebugName().c_str() : "no target");
 +  }
-+  wfg_frame_writes_ = 0;
-+  wfg_writes_ = 0;
-+  wfg_reverse_z_votes_ = 0;
++  tremu_frame_writes_ = 0;
++  tremu_writes_ = 0;
++  tremu_reverse_z_votes_ = 0;
 +  // Depth a few frames old beats depth that comes and goes.
-+  return wfg_frames_without_depth_ <= 8;
++  return tremu_frames_without_depth_ <= 8;
 +}
 +
  bool VulkanRenderTargetCache::Resolve(
@@ -11961,7 +11961,7 @@ index 88f2eb0..160a9ec 100644
      return true;
    }
  
-+  WfgStereoCapture(resolve_info);
++  TremuStereoCapture(resolve_info);
 +
    const ui::vulkan::VulkanDevice* const vulkan_device =
        command_processor_.GetVulkanDevice();
@@ -11971,41 +11971,41 @@ index 88f2eb0..160a9ec 100644
        // the render pass is not yet active, so they can be sampled in-pass.
        PreparePendingDrawPassTransferBarriers();
 +
-+      if (wfg_stereo::enabled.load(std::memory_order_relaxed) &&
++      if (tremu_stereo::enabled.load(std::memory_order_relaxed) &&
 +          is_rasterization_done) {
 +        if (normalized_depth_control.z_enable &&
 +            normalized_depth_control.z_write_enable &&
 +            depth_and_color_render_targets[0]) {
-+          if (wfg_depth_rt_ != depth_and_color_render_targets[0]) {
-+            wfg_depth_rt_ = depth_and_color_render_targets[0];
-+            wfg_writes_ = 0;
++          if (tremu_depth_rt_ != depth_and_color_render_targets[0]) {
++            tremu_depth_rt_ = depth_and_color_render_targets[0];
++            tremu_writes_ = 0;
 +          }
-+          ++wfg_writes_;
++          ++tremu_writes_;
 +          // The way the frame's depth goes: most of its draws say, not the last
 +          // (a clear-like draw may use any function).
 +          switch (normalized_depth_control.zfunc) {
 +            case xenos::CompareFunction::kGreater:
 +            case xenos::CompareFunction::kGreaterEqual:
-+              ++wfg_reverse_z_votes_;
++              ++tremu_reverse_z_votes_;
 +              break;
 +            case xenos::CompareFunction::kLess:
 +            case xenos::CompareFunction::kLessEqual:
-+              --wfg_reverse_z_votes_;
++              --tremu_reverse_z_votes_;
 +              break;
 +            default:
 +              break;
 +          }
-+          if (wfg_reverse_z_votes_ > 0) {
-+            wfg_reverse_z_ = true;
-+          } else if (wfg_reverse_z_votes_ < 0) {
-+            wfg_reverse_z_ = false;
++          if (tremu_reverse_z_votes_ > 0) {
++            tremu_reverse_z_ = true;
++          } else if (tremu_reverse_z_votes_ < 0) {
++            tremu_reverse_z_ = false;
 +          }
 +        } else if (!normalized_depth_control.z_enable &&
 +                   (normalized_color_mask & 0xF) &&
 +                   depth_and_color_render_targets[1]) {
 +          reg::RB_BLENDCONTROL blend;
 +          blend.value = register_file()[XE_GPU_REG_RB_BLENDCONTROL0];
-+          WfgStereoNoteOverlayDraw(
++          TremuStereoNoteOverlayDraw(
 +              depth_and_color_render_targets[1],
 +              blend.color_srcblend != xenos::BlendFactor::kOne ||
 +                  blend.color_destblend != xenos::BlendFactor::kZero);
@@ -12015,7 +12015,7 @@ index 88f2eb0..160a9ec 100644
  
      case Path::kPixelShaderInterlock: {
 diff --git a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_render_target_cache.h b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_render_target_cache.h
-index 5f61d0c..fd36234 100644
+index 5f61d0c..c444842 100644
 --- a/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_render_target_cache.h
 +++ b/emulator-core/src/main/cpp/xenia/src/xenia/gpu/vulkan/vulkan_render_target_cache.h
 @@ -11,6 +11,7 @@
@@ -12030,11 +12030,11 @@ index 5f61d0c..fd36234 100644
  
  class VulkanCommandProcessor;
  
-+// WFGEmu: a picture per eye. Enabled before boot (the surface is twice as wide),
++// Tremu: a picture per eye. Enabled before boot (the surface is twice as wide),
 +// the strength may change at any time. Alternate: each frame of the game is drawn
 +// for one eye in turn, the other keeps its last one. Otherwise both from the frame's
 +// depth, which leaves a halo where an eye sees past an object's edge.
-+namespace wfg_stereo {
++namespace tremu_stereo {
 +inline std::atomic<bool> enabled{false};
 +inline std::atomic<int> percent{0};
 +inline std::atomic<bool> alternate{true};
@@ -12049,7 +12049,7 @@ index 5f61d0c..fd36234 100644
 +// Depth is taken every other pixel and row: reading all of it costs as much as the
 +// rest of the stereo together, and the relief's edges are fattened anyway.
 +constexpr uint32_t kReliefWidth = kEyeWidth / 2, kReliefHeight = kEyeHeight / 2;
-+}  // namespace wfg_stereo
++}  // namespace tremu_stereo
 +
  class VulkanRenderTargetCache final : public RenderTargetCache {
   public:
@@ -12058,7 +12058,7 @@ index 5f61d0c..fd36234 100644
    // identifying a render pass bucket in the frame-time breakdown.
    std::string GetLastUpdateRenderTargetsDebugName() const;
  
-+  // WFGEmu stereo: depth is copied out of the render targets at resolves (the
++  // Tremu stereo: depth is copied out of the render targets at resolves (the
 +  // game clears them soon after, and tiles a 4x MSAA 720p scene through EDRAM).
 +  VkDescriptorSetLayout descriptor_set_layout_sampled_image_x2() const {
 +    return descriptor_set_layout_sampled_image_x2_;
@@ -12066,7 +12066,7 @@ index 5f61d0c..fd36234 100644
 +  // Ends a guest frame: whether the depth image holds depth to use and, if this
 +  // frame wrote it (fresh_out), the rectangle of it the frame covers. overlay_out:
 +  // the frame as it was before the HUD has been copied too.
-+  bool WfgStereoEndFrame(uint32_t front_width, uint32_t front_height,
++  bool TremuStereoEndFrame(uint32_t front_width, uint32_t front_height,
 +                         int32_t rect_out[4], bool& fresh_out,
 +                         bool& overlay_out);
 +  VkDescriptorSetLayout descriptor_set_layout_sampled_image() const {
@@ -12079,23 +12079,23 @@ index 5f61d0c..fd36234 100644
        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
    VkImageLayout color_draw_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
  
-+  // WFGEmu stereo: copies the depth under a resolve to the depth image.
-+  void WfgStereoCapture(const draw_util::ResolveInfo& info);
++  // Tremu stereo: copies the depth under a resolve to the depth image.
++  void TremuStereoCapture(const draw_util::ResolveInfo& info);
 +  // A draw without depth test on a color target the size of the picture: a
 +  // post-process pass if opaque, the HUD if it blends, and the first blending draw
 +  // after an opaque one finds the scene finished: copied before it.
-+  void WfgStereoNoteOverlayDraw(RenderTarget* color, bool blends);
-+  bool wfg_overlay_armed_ = true, wfg_overlay_copied_ = false;
-+  bool wfg_test_no_capture_ = false;
-+  RenderTarget* wfg_depth_rt_ = nullptr;    // Last written by a draw.
-+  RenderTarget* wfg_capture_rt_ = nullptr;  // Last copied.
-+  uint32_t wfg_writes_ = 0;        // Depth-writing draws since the last copy.
-+  uint32_t wfg_frame_writes_ = 0;  // Those copied this frame.
-+  uint32_t wfg_frames_without_depth_ = UINT32_MAX / 2;
-+  uint32_t wfg_front_width_ = 1280, wfg_front_height_ = 720;
-+  int32_t wfg_rect_[4] = {};  // x0, y0, x1, y1 of this frame's copies.
-+  bool wfg_reverse_z_ = false, wfg_depth_cleared_ = false;
-+  int32_t wfg_reverse_z_votes_ = 0;
++  void TremuStereoNoteOverlayDraw(RenderTarget* color, bool blends);
++  bool tremu_overlay_armed_ = true, tremu_overlay_copied_ = false;
++  bool tremu_test_no_capture_ = false;
++  RenderTarget* tremu_depth_rt_ = nullptr;    // Last written by a draw.
++  RenderTarget* tremu_capture_rt_ = nullptr;  // Last copied.
++  uint32_t tremu_writes_ = 0;        // Depth-writing draws since the last copy.
++  uint32_t tremu_frame_writes_ = 0;  // Those copied this frame.
++  uint32_t tremu_frames_without_depth_ = UINT32_MAX / 2;
++  uint32_t tremu_front_width_ = 1280, tremu_front_height_ = 720;
++  int32_t tremu_rect_[4] = {};  // x0, y0, x1, y1 of this frame's copies.
++  bool tremu_reverse_z_ = false, tremu_depth_cleared_ = false;
++  int32_t tremu_reverse_z_votes_ = 0;
 +
    // For host render targets.
  

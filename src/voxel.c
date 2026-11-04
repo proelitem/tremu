@@ -11,7 +11,7 @@
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "Tremu", __VA_ARGS__)
 
-enum { EYES = 2, MAX_W = WFG_VOXEL_MAX, MAX_H = WFG_VOXEL_MAX };
+enum { EYES = 2, MAX_W = TREMU_VOXEL_MAX, MAX_H = TREMU_VOXEL_MAX };
 
 /* Depth of each layer, in screen pixels (front face, then thickness). Sprites sit on the
  * screen plane so the gun hits what it seems to touch; z grows towards the player.
@@ -38,7 +38,7 @@ static XrCompositionLayerProjection layer = {XR_TYPE_COMPOSITION_LAYER_PROJECTIO
 static XrCompositionLayerProjectionView views[EYES];
 static bool see_through;
 
-void wfg_voxel_set_see_through(bool on) { see_through = on; }
+void tremu_voxel_set_see_through(bool on) { see_through = on; }
 
 static const char *vertex_src =
     "#version 300 es\n"
@@ -95,7 +95,7 @@ static GLuint compile(GLenum type, const char *src) {
 
 static bool setup(XrInstance instance, XrSystemId system, XrSession session);
 
-bool wfg_voxel_init(XrInstance instance, XrSystemId system, XrSession session) {
+bool tremu_voxel_init(XrInstance instance, XrSystemId system, XrSession session) {
     if (ready || failed) return ready;
     failed = !setup(instance, system, session);
     if (failed) LOG("voxel view unavailable");
@@ -180,7 +180,7 @@ static bool setup(XrInstance instance, XrSystemId system, XrSession session) {
     return true;
 }
 
-void wfg_voxel_upload(const uint32_t *pixels, const uint8_t *layers, unsigned w, unsigned h, bool continuous) {
+void tremu_voxel_upload(const uint32_t *pixels, const uint8_t *layers, unsigned w, unsigned h, bool continuous) {
     if (!ready || !w || !h || w > MAX_W || h > MAX_H) return;
     continuous_depth = continuous;
     if (w != tex_w || h != tex_h) {
@@ -246,7 +246,7 @@ static void projection_matrix(XrFovf fov, float m[16]) {
     memcpy(m, p, sizeof p);
 }
 
-const XrCompositionLayerBaseHeader *wfg_voxel_render(XrSpace space, XrTime time, XrPosef screen, float width,
+const XrCompositionLayerBaseHeader *tremu_voxel_render(XrSpace space, XrTime time, XrPosef screen, float width,
                                                      float height) {
     if (!ready || !frame_w) return NULL;
     XrViewLocateInfo li = {XR_TYPE_VIEW_LOCATE_INFO};
@@ -326,7 +326,7 @@ const XrCompositionLayerBaseHeader *wfg_voxel_render(XrSpace space, XrTime time,
     return (const XrCompositionLayerBaseHeader *)&layer;
 }
 
-void wfg_voxel_destroy(void) {
+void tremu_voxel_destroy(void) {
     if (!ready) return;
     for (int e = 0; e < EYES; e++) {
         xrDestroySwapchain(chains[e]);

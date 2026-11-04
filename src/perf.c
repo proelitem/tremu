@@ -32,7 +32,7 @@ static atomic_int emulator_tid;
 static bool session_running;
 static int registered_emulator_tid;
 
-static WfgPerf current;
+static TremuPerf current;
 static bool have_current;
 static float requested_rate;
 static XrCompositionLayerSettingsFB quad_settings = {XR_TYPE_COMPOSITION_LAYER_SETTINGS_FB};
@@ -40,7 +40,7 @@ static XrCompositionLayerSettingsFB quad_settings = {XR_TYPE_COMPOSITION_LAYER_S
 /* Written by the emulator thread, read by the XR thread. */
 static _Atomic float wanted, shown_fps, shown_wanted, shown_ms;
 
-void wfg_perf_add_extensions(const char **ext, uint32_t *count) {
+void tremu_perf_add_extensions(const char **ext, uint32_t *count) {
     static const char *const wanted_names[] = {XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME,
                                                XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME, XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME};
     uint32_t n = 0;
@@ -61,7 +61,7 @@ void wfg_perf_add_extensions(const char **ext, uint32_t *count) {
     free(props);
 }
 
-void wfg_perf_init(XrInstance instance, XrSession session) {
+void tremu_perf_init(XrInstance instance, XrSession session) {
     perf_session = session;
 #define GET(name, fn) xrGetInstanceProcAddr(instance, name, (PFN_xrVoidFunction *)&fn)
     GET("xrPerfSettingsSetPerformanceLevelEXT", set_level);
@@ -79,25 +79,25 @@ void wfg_perf_init(XrInstance instance, XrSession session) {
     for (uint32_t i = 0; i < rate_count; i++) LOG("perf refresh rate available: %.0f Hz", rates[i]);
 }
 
-static const XrPerfSettingsLevelEXT levels[WFG_PERF_LEVELS] = {
+static const XrPerfSettingsLevelEXT levels[TREMU_PERF_LEVELS] = {
     XR_PERF_SETTINGS_LEVEL_POWER_SAVINGS_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_LOW_EXT,
     XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT, XR_PERF_SETTINGS_LEVEL_BOOST_EXT};
 
-void wfg_perf_resolve(const WfgPerf *perf, int system, WfgPerf *out) {
+void tremu_perf_resolve(const TremuPerf *perf, int system, TremuPerf *out) {
     *out = *perf;
     int profile = perf->profile;
-    if (profile == WFG_PERF_AUTO) {
+    if (profile == TREMU_PERF_AUTO) {
         /* The systems whose emulation takes all the processor can give. */
         bool heavy = system == SYS_PS2 || system == SYS_NAMCO246 || system == SYS_X360 || system == SYS_XBOX || system == SYS_WII ||
                      system == SYS_GAMECUBE || system == SYS_SATURN || system == SYS_N64 || system == SYS_MAME;
         /* No game (the carousel): nothing to gain from the higher levels but heat. */
-        profile = system < 0 ? WFG_PERF_BATTERY : heavy ? WFG_PERF_PERFORMANCE : WFG_PERF_BALANCED;
+        profile = system < 0 ? TREMU_PERF_BATTERY : heavy ? TREMU_PERF_PERFORMANCE : TREMU_PERF_BALANCED;
     }
     switch (profile) {
-    case WFG_PERF_BATTERY: *out = (WfgPerf){perf->profile, WFG_LEVEL_LOW, WFG_LEVEL_LOW, 72, 0, 0}; break;
-    case WFG_PERF_BALANCED: *out = (WfgPerf){perf->profile, WFG_LEVEL_HIGH, WFG_LEVEL_HIGH, 0, 0, 0}; break;
-    case WFG_PERF_PERFORMANCE: *out = (WfgPerf){perf->profile, WFG_LEVEL_MAX, WFG_LEVEL_HIGH, 0, 0, 0}; break;
-    case WFG_PERF_QUALITY: *out = (WfgPerf){perf->profile, WFG_LEVEL_MAX, WFG_LEVEL_MAX, 0, 1, 2}; break;
+    case TREMU_PERF_BATTERY: *out = (TremuPerf){perf->profile, TREMU_LEVEL_LOW, TREMU_LEVEL_LOW, 72, 0, 0}; break;
+    case TREMU_PERF_BALANCED: *out = (TremuPerf){perf->profile, TREMU_LEVEL_HIGH, TREMU_LEVEL_HIGH, 0, 0, 0}; break;
+    case TREMU_PERF_PERFORMANCE: *out = (TremuPerf){perf->profile, TREMU_LEVEL_MAX, TREMU_LEVEL_HIGH, 0, 0, 0}; break;
+    case TREMU_PERF_QUALITY: *out = (TremuPerf){perf->profile, TREMU_LEVEL_MAX, TREMU_LEVEL_MAX, 0, 1, 2}; break;
     default: break;
     }
 }
@@ -132,13 +132,13 @@ static void send_settings(void) {
         XrResult gpu = set_level(perf_session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, levels[current.gpu]);
         LOG("perf levels cpu %d -> %d, gpu %d -> %d", current.cpu, cpu, current.gpu, gpu);
     }
-    wfg_perf_tick();
+    tremu_perf_tick();
 }
 
-void wfg_perf_apply(const WfgOptions *o, const char *game_key, int system) {
-    wfg_perf_resolve(wfg_options_perf(o, game_key), system, &current);
-    if (current.cpu < 0 || current.cpu >= WFG_PERF_LEVELS) current.cpu = WFG_LEVEL_HIGH;
-    if (current.gpu < 0 || current.gpu >= WFG_PERF_LEVELS) current.gpu = WFG_LEVEL_HIGH;
+void tremu_perf_apply(const TremuOptions *o, const char *game_key, int system) {
+    tremu_perf_resolve(tremu_options_perf(o, game_key), system, &current);
+    if (current.cpu < 0 || current.cpu >= TREMU_PERF_LEVELS) current.cpu = TREMU_LEVEL_HIGH;
+    if (current.gpu < 0 || current.gpu >= TREMU_PERF_LEVELS) current.gpu = TREMU_LEVEL_HIGH;
     have_current = true;
     if (system < 0) atomic_store(&wanted, 0);  /* the carousel has no frame rate to follow */
     quad_settings.layerFlags = current.sharpen == 1 ? XR_COMPOSITION_LAYER_SETTINGS_NORMAL_SHARPENING_BIT_FB
@@ -148,7 +148,7 @@ void wfg_perf_apply(const WfgOptions *o, const char *game_key, int system) {
     send_settings();
 }
 
-void wfg_perf_session_begun(void) {
+void tremu_perf_session_begun(void) {
     session_running = true;
     requested_rate = 0;
     if (set_thread) {
@@ -159,9 +159,9 @@ void wfg_perf_session_begun(void) {
     send_settings();
 }
 
-void wfg_perf_emulator_thread(void) { atomic_store(&emulator_tid, gettid()); }
+void tremu_perf_emulator_thread(void) { atomic_store(&emulator_tid, gettid()); }
 
-void wfg_perf_tick(void) {
+void tremu_perf_tick(void) {
     if (!session_running) return;
     int tid = atomic_load(&emulator_tid);
     if (set_thread && tid && tid != registered_emulator_tid) {
@@ -173,9 +173,9 @@ void wfg_perf_tick(void) {
     request_refresh(current.refresh ? (float)current.refresh : auto_rate(atomic_load(&wanted)));
 }
 
-const void *wfg_perf_quad_next(void) { return has_sharpening && quad_settings.layerFlags ? &quad_settings : NULL; }
+const void *tremu_perf_quad_next(void) { return has_sharpening && quad_settings.layerFlags ? &quad_settings : NULL; }
 
-void wfg_perf_frame(uint64_t run_ns, double wanted_fps) {
+void tremu_perf_frame(uint64_t run_ns, double wanted_fps) {
     static uint64_t window_start, sum;
     static unsigned frames;
     struct timespec ts;
@@ -201,7 +201,7 @@ void wfg_perf_frame(uint64_t run_ns, double wanted_fps) {
     }
 }
 
-int wfg_perf_next_refresh(int refresh, int direction) {
+int tremu_perf_next_refresh(int refresh, int direction) {
     /* Choices: 0, then each rate. */
     int index = 0;
     for (uint32_t i = 0; i < rate_count; i++)
@@ -211,7 +211,7 @@ int wfg_perf_next_refresh(int refresh, int direction) {
     return index ? (int)rates[index - 1] : 0;
 }
 
-bool wfg_perf_status(char *speed, size_t speed_size, char *system, size_t system_size) {
+bool tremu_perf_status(char *speed, size_t speed_size, char *system, size_t system_size) {
     float fps = atomic_load(&shown_fps);
     if (fps > 0)
         snprintf(speed, speed_size, T("Derni\xC3\xA8re mesure : %.1f / %.1f images/s, %.1f ms par image"), fps, atomic_load(&shown_wanted),

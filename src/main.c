@@ -45,7 +45,7 @@ enum { LEFT, RIGHT, HANDS };
 
 /* Saved settings (menu); the screen sits options.screen_* from screen_origin, which
  * starts at the LOCAL origin and moves with "recenter". */
-static WfgOptions options;
+static TremuOptions options;
 static char options_path[512];
 static XrPosef screen_origin = {{0, 0, 0, 1}, {0, 0, 0}};
 static bool menu_open, menu_button_was;
@@ -81,7 +81,7 @@ static pthread_mutex_t emu_lock = PTHREAD_MUTEX_INITIALIZER;
 static atomic_int emu_state;  /* 0 loading, 1 running, -1 failed */
 static atomic_bool emu_active;  /* false while the session is not focused */
 /* Player 1 and player 2 guns, written by the XR loop and read once per emulated frame. */
-static WgGun shared_guns[WG_PLAYERS] = {{.offscreen = true}, {.offscreen = true}, {.offscreen = true}, {.offscreen = true}};
+static TremuGun shared_guns[TREMU_PLAYERS] = {{.offscreen = true}, {.offscreen = true}, {.offscreen = true}, {.offscreen = true}};
 static uint32_t *shared_frame;
 static unsigned shared_w, shared_h, shared_cap, shared_max_w, shared_max_h;
 /* Pixel layers of shared_frame (NES), for the voxel view; shared_has_layers false otherwise. */
@@ -111,7 +111,7 @@ static char joined_ip[64];  /* XR thread: host of the current two-headset game, 
 
 /* Logo at start-up, then the game carousel; a game replaces it until "back to carousel". */
 enum { MODE_SPLASH, MODE_CAROUSEL, MODE_GAME };
-/* Console whose pad the Touch controllers play besides the gun (WfgPadConsole), or PAD_NONE
+/* Console whose pad the Touch controllers play besides the gun (TremuPadConsole), or PAD_NONE
  * (set by the emulator thread). */
 enum { PAD_NONE = -1 };
 static atomic_int pad_layout = PAD_NONE;
@@ -242,9 +242,9 @@ static bool init_openxr(struct android_app *app) {
 
     const char *ext[7] = {XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME, XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME};
     uint32_t ext_count = 2;
-    bool passthrough = wfg_passthrough_supported();
+    bool passthrough = tremu_passthrough_supported();
     if (passthrough) ext[ext_count++] = XR_FB_PASSTHROUGH_EXTENSION_NAME;
-    wfg_perf_add_extensions(ext, &ext_count);
+    tremu_perf_add_extensions(ext, &ext_count);
     XrInstanceCreateInfoAndroidKHR ia = {XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
     ia.applicationVM = app->activity->vm;
     ia.applicationActivity = app->activity->clazz;
@@ -281,8 +281,8 @@ static bool init_openxr(struct android_app *app) {
     if (!XR_CHECK(xrCreateReferenceSpace(session, &rs, &local_space))) return false;
     rs.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
     if (!XR_CHECK(xrCreateReferenceSpace(session, &rs, &view_space))) return false;
-    if (passthrough) wfg_passthrough_init(instance, session);
-    wfg_perf_init(instance, session);
+    if (passthrough) tremu_passthrough_init(instance, session);
+    tremu_perf_init(instance, session);
     return init_actions();
 }
 
@@ -367,11 +367,11 @@ static void quick_state(const char *key, bool save) {
     }
     char path[700];
     snprintf(path, sizeof path, "%s/%s.state", core_save_dir, key);
-    size_t size = wg_core_state_size();
+    size_t size = tremu_core_state_size();
     uint8_t *buf = size ? malloc(size) : NULL;
     bool ok = false;
     if (buf && save) {
-        FILE *f = wg_core_save_state(buf, size) ? fopen(path, "wb") : NULL;
+        FILE *f = tremu_core_save_state(buf, size) ? fopen(path, "wb") : NULL;
         if (f) {
             ok = fwrite(buf, 1, size, f) == size;
             ok = fclose(f) == 0 && ok;
@@ -382,7 +382,7 @@ static void quick_state(const char *key, bool save) {
         if (!f) {
             set_state_message(T("Aucune sauvegarde pour ce jeu"));
         } else {
-            ok = fread(buf, 1, size, f) == size && wg_core_load_state(buf, size);
+            ok = fread(buf, 1, size, f) == size && tremu_core_load_state(buf, size);
             fclose(f);
             set_state_message(T(ok ? "Sauvegarde charg\xC3\xA9" "e" : "Sauvegarde incompatible"));
         }
@@ -396,7 +396,7 @@ static void quick_state(const char *key, bool save) {
 static bool draw_gun_sights;
 
 /* A cross with a dark outline at the gun's place in an RGBA frame (bottom row first). */
-static void draw_sight(uint32_t *frame, unsigned stride, unsigned w, unsigned h, int shift, const WgGun *g, uint32_t colour) {
+static void draw_sight(uint32_t *frame, unsigned stride, unsigned w, unsigned h, int shift, const TremuGun *g, uint32_t colour) {
     if (g->offscreen) return;
     int cx = (int)((g->x + 0x7fff) * (int64_t)(w - 1) / 0xfffe) + shift;
     int cy = (int)(h - 1) - (int)((g->y + 0x7fff) * (int64_t)(h - 1) / 0xfffe);
@@ -421,7 +421,7 @@ static void draw_sight(uint32_t *frame, unsigned stride, unsigned w, unsigned h,
  * two sights: the block around the aim that matches best between the eyes. Eased, and it holds on
  * flat colour, where every s matches. */
 static int sight_shift(const uint32_t *frame, unsigned stride, unsigned left_x, unsigned right_x, unsigned w, unsigned h,
-                       const WgGun *g, float *eased) {
+                       const TremuGun *g, float *eased) {
     int last = (int)lroundf(*eased);
     if (g->offscreen) return last;
     int cx = (int)((g->x + 0x7fff) * (int64_t)(w - 1) / 0xfffe);
@@ -461,33 +461,33 @@ static bool run_game(void) {
     snprintf(rom, sizeof rom, "%s", core_rom);
     pthread_mutex_unlock(&emu_lock);
     /* The system picks the core; a zipped console game is unpacked first (arcade sets stay zipped). */
-    int system = wfg_system_detect(rom);
+    int system = tremu_system_detect(rom);
     draw_gun_sights = system == SYS_PS2 || system == SYS_NAMCO246;
     /* Consoles also play their pad games: the Touch controllers become a gamepad. Consoles with a
      * gun keep it for the games made for it (by name); NES and SNES have both at once. */
     bool has_gun = system == SYS_PS1 || system == SYS_PS2 || system == SYS_DREAMCAST || system == SYS_MEGADRIVE ||
                    system == SYS_SATURN;
-    bool pad_game = (has_gun && !wfg_system_gun_game(rom)) || system == SYS_N64 || system == SYS_GAMECUBE ||
+    bool pad_game = (has_gun && !tremu_system_gun_game(rom)) || system == SYS_N64 || system == SYS_GAMECUBE ||
                     system == SYS_X360 || system == SYS_XBOX || system == SYS_PSP;
     draw_gun_sights = draw_gun_sights && !pad_game;
     /* Xbox gun games: xemu presents a light gun (read at boot), buttons stay on the Touch pad. */
-    if (system == SYS_XBOX && wfg_system_xbox_gun_game(rom)) {
+    if (system == SYS_XBOX && tremu_system_xbox_gun_game(rom)) {
         draw_gun_sights = true;
-        setenv("WFG_XBOX_GUN", "1", 1);
+        setenv("TREMU_XBOX_GUN", "1", 1);
     }
-    int console = system == SYS_NES ? WFG_PAD_NES : system == SYS_SNES ? WFG_PAD_SNES : system == SYS_N64 ? WFG_PAD_N64
-                  : system == SYS_GAMECUBE ? WFG_PAD_GAMECUBE : system == SYS_WII ? WFG_PAD_WII : PAD_NONE;
-    if (pad_game && system == SYS_PS1) console = WFG_PAD_PS1;
-    if (pad_game && system == SYS_PS2) console = WFG_PAD_PS2;
-    if (pad_game && system == SYS_DREAMCAST) console = WFG_PAD_DREAMCAST;
-    if (pad_game && system == SYS_MEGADRIVE) console = WFG_PAD_MEGADRIVE;
-    if (pad_game && system == SYS_SATURN) console = WFG_PAD_SATURN;
-    if (system == SYS_X360) console = WFG_PAD_X360;
-    if (system == SYS_XBOX) console = WFG_PAD_XBOX;
-    if (system == SYS_PSP) console = WFG_PAD_PSP;
+    int console = system == SYS_NES ? TREMU_PAD_NES : system == SYS_SNES ? TREMU_PAD_SNES : system == SYS_N64 ? TREMU_PAD_N64
+                  : system == SYS_GAMECUBE ? TREMU_PAD_GAMECUBE : system == SYS_WII ? TREMU_PAD_WII : PAD_NONE;
+    if (pad_game && system == SYS_PS1) console = TREMU_PAD_PS1;
+    if (pad_game && system == SYS_PS2) console = TREMU_PAD_PS2;
+    if (pad_game && system == SYS_DREAMCAST) console = TREMU_PAD_DREAMCAST;
+    if (pad_game && system == SYS_MEGADRIVE) console = TREMU_PAD_MEGADRIVE;
+    if (pad_game && system == SYS_SATURN) console = TREMU_PAD_SATURN;
+    if (system == SYS_X360) console = TREMU_PAD_X360;
+    if (system == SYS_XBOX) console = TREMU_PAD_XBOX;
+    if (system == SYS_PSP) console = TREMU_PAD_PSP;
     atomic_store(&pad_layout, console);
-    wfg_menu_set_pad_console(atomic_load(&pad_layout));
-    wg_core_set_gamepad(pad_game);
+    tremu_menu_set_pad_console(atomic_load(&pad_layout));
+    tremu_core_set_gamepad(pad_game);
     atomic_store(&guncon2, system == SYS_PS2 && !pad_game);
     atomic_store(&one_game_process, system == SYS_X360 || system == SYS_XBOX);
     if (system < 0) { LOG("%s: unknown system", rom); return false; }
@@ -521,14 +521,14 @@ static bool run_game(void) {
         const char *set = strrchr(rom, '/');
         snprintf(game_file, sizeof game_file, "%s/%s.zip", unzip_dir, set ? set + 1 : rom);
         mkdir(unzip_dir, 0700);
-        if (!wfg_zip_folder(rom, game_file)) return false;
+        if (!tremu_zip_folder(rom, game_file)) return false;
     } else if (system != SYS_ARCADE && system != SYS_MAME && dot && !strcasecmp(dot, ".zip") &&
-        !wfg_system_unzip(rom, (WfgSystem)system, unzip_dir, game_file, sizeof game_file))
+        !tremu_system_unzip(rom, (TremuSystem)system, unzip_dir, game_file, sizeof game_file))
         return false;
     char assets_dir[600];
     if (system == SYS_WII || system == SYS_GAMECUBE) {
         snprintf(assets_dir, sizeof assets_dir, "%s/dolphin-emu/Sys", core_system_dir);
-        if (!wfg_unpack_asset("dolphin-sys.zip", assets_dir)) return false;
+        if (!tremu_unpack_asset("dolphin-sys.zip", assets_dir)) return false;
     } else if (system == SYS_PS2) {
         /* LRPS2 needs a PS2 BIOS dumped from the player's console, in bios/pcsx2/bios. */
         snprintf(assets_dir, sizeof assets_dir, "%s/pcsx2/bios", core_system_dir);
@@ -559,21 +559,21 @@ static bool run_game(void) {
         }
     } else if (system == SYS_NAMCO246) {
         snprintf(assets_dir, sizeof assets_dir, "%s/play/arcadedefs", core_system_dir);
-        if (!wfg_unpack_asset("play-arcadedefs.zip", assets_dir)) return false;
+        if (!tremu_unpack_asset("play-arcadedefs.zip", assets_dir)) return false;
     } else if (system == SYS_X360) {
         /* Our Turnip Vulkan driver (Mesa, MIT) for Xenia, unpacked into the app's private files where
-         * libadrenotools may load it; the menu can pick Adreno instead (wg_core_set_vulkan_driver). */
-        static const char *const turnips[] = {"WFG-Turnip"};
+         * libadrenotools may load it; the menu can pick Adreno instead (tremu_core_set_vulkan_driver). */
+        static const char *const turnips[] = {"Tremu-Turnip"};
         mkdir(drivers_dir, 0700);
         for (size_t i = 0; i < sizeof turnips / sizeof turnips[0]; i++) {
             char asset[96];
             snprintf(asset, sizeof asset, "turnip-%s.zip", turnips[i]);
             snprintf(assets_dir, sizeof assets_dir, "%s/%s", drivers_dir, turnips[i]);
-            if (!wfg_unpack_asset(asset, assets_dir)) LOG("driver %s not unpacked", turnips[i]);
+            if (!tremu_unpack_asset(asset, assets_dir)) LOG("driver %s not unpacked", turnips[i]);
         }
     } else if (system == SYS_PSP) {
         snprintf(assets_dir, sizeof assets_dir, "%s/PPSSPP", core_system_dir);
-        if (!wfg_unpack_asset("ppsspp-assets.zip", assets_dir)) return false;
+        if (!tremu_unpack_asset("ppsspp-assets.zip", assets_dir)) return false;
         /* Every headset runs its own ad hoc server, so that hosting needs no reboot of the game; a
          * guest boots on the host's ("ip", or "ip:port" from a party code: then through its relay,
          * since across the Internet only the host's ports are open). */
@@ -586,7 +586,7 @@ static bool run_game(void) {
             uint8_t b[5] = {0};
             if (r) { fread(b, 1, sizeof b, r); fclose(r); }
             snprintf(options.adhoc_mac, sizeof options.adhoc_mac, "02%02x%02x%02x%02x%02x", b[0], b[1], b[2], b[3], b[4]);
-            wfg_options_save(options_path, &options);
+            tremu_options_save(options_path, &options);
         }
         char mac[sizeof options.adhoc_mac];
         snprintf(mac, sizeof mac, "%s", options.adhoc_mac);
@@ -595,22 +595,22 @@ static bool run_game(void) {
         if (port) *port = 0;
         bool own_server = !server[0];
         if (own_server && !netplay_local_ip(server, sizeof server)) snprintf(server, sizeof server, "127.0.0.1");
-        wg_core_set_adhoc(server, own_server, port != NULL, mac);
+        tremu_core_set_adhoc(server, own_server, port != NULL, mac);
     }
     {
-        WfgPerf perf;
+        TremuPerf perf;
         pthread_mutex_lock(&emu_lock);
-        wfg_perf_resolve(wfg_options_perf(&options, game_key), system, &perf);
+        tremu_perf_resolve(tremu_options_perf(&options, game_key), system, &perf);
         pthread_mutex_unlock(&emu_lock);
-        wg_core_set_internal_res(perf.res);
+        tremu_core_set_internal_res(perf.res);
         atomic_store(&perf_system, system);
         atomic_store(&perf_dirty, true);
     }
-    if (!wg_core_load(wfg_system_info((WfgSystem)system)->core, core_system_dir, core_save_dir, game_file)) return false;
+    if (!tremu_core_load(tremu_system_info((TremuSystem)system)->core, core_system_dir, core_save_dir, game_file)) return false;
     pthread_mutex_lock(&emu_lock);
-    shared_max_w = wg_core_max_width();
-    shared_max_h = wg_core_max_height();
-    shared_aspect = wg_core_aspect();
+    shared_max_w = tremu_core_max_width();
+    shared_max_h = tremu_core_max_height();
+    shared_aspect = tremu_core_aspect();
     pthread_mutex_unlock(&emu_lock);
     /* Xbox consoles: the game starts at once (its sound plays), so no loading picture over it. */
     atomic_store(&game_booting, system != SYS_X360 && system != SYS_XBOX);
@@ -630,7 +630,7 @@ static bool run_game(void) {
     if (host_ip[0] && system != SYS_PSP) netplay_join(host_ip, key, rom_crc);
     atomic_store(&adhoc_game, system == SYS_PSP);
 
-    uint64_t period = (uint64_t)(1e9 / wg_core_fps());
+    uint64_t period = (uint64_t)(1e9 / tremu_core_fps());
     uint64_t next = now_ns();
     uint64_t hand_sum = 0, hand_max = 0;  /* time spent giving each frame to the XR thread */
     while (!quit && atomic_load(&emu_cmd) == CMD_NONE) {
@@ -642,7 +642,7 @@ static bool run_game(void) {
             char mac[sizeof options.adhoc_mac];
             snprintf(mac, sizeof mac, "%s", options.adhoc_mac);
             pthread_mutex_unlock(&emu_lock);
-            wg_core_set_adhoc(server, true, request == NET_REQ_HOST_INTERNET, mac);
+            tremu_core_set_adhoc(server, true, request == NET_REQ_HOST_INTERNET, mac);
             netplay_host_link(key, title, request == NET_REQ_HOST_INTERNET);
         } else if (request == NET_REQ_HOST || request == NET_REQ_HOST_INTERNET)
             netplay_host(key, title, rom_crc, request == NET_REQ_HOST_INTERNET);
@@ -659,9 +659,9 @@ static bool run_game(void) {
             continue;
         }
         pthread_mutex_lock(&emu_lock);
-        WgGun guns[WG_PLAYERS];
+        TremuGun guns[TREMU_PLAYERS];
         memcpy(guns, shared_guns, sizeof guns);
-        WgGun local = shared_guns[0];
+        TremuGun local = shared_guns[0];
         pthread_mutex_unlock(&emu_lock);
         /* In a two-headset game each frame waits for both players' inputs (lockstep). */
         NetState net = netplay_state();
@@ -673,9 +673,9 @@ static bool run_game(void) {
             continue;
         }
         uint64_t run_start = now_ns();
-        wg_core_run(guns);
+        tremu_core_run(guns);
         uint64_t run_time = now_ns() - run_start;
-        wfg_perf_frame(run_time, wg_core_fps());
+        tremu_perf_frame(run_time, tremu_core_fps());
         if (networked) netplay_after_frame();
         {
             /* Every 5 s, what player 1's gun sends: first thing to check when aiming looks wrong.
@@ -688,7 +688,7 @@ static bool run_game(void) {
             uint64_t t = now_ns();
             if (t - last_gun_log > 5000000000ull) {
                 LOG("speed %.1f fps of %.2f wanted, core frame avg %.1f max %.1f ms, hand-over to the XR thread avg %.1f max %.1f ms",
-                    run_frames * 1e9 / (double)(t - last_gun_log), wg_core_fps(), run_sum / 1e6 / run_frames, run_max / 1e6,
+                    run_frames * 1e9 / (double)(t - last_gun_log), tremu_core_fps(), run_sum / 1e6 / run_frames, run_max / 1e6,
                     hand_sum / 1e6 / run_frames, hand_max / 1e6);
                 hand_sum = hand_max = 0;
                 run_sum = run_max = 0;
@@ -700,7 +700,7 @@ static bool run_game(void) {
         }
 
         unsigned w, h;
-        const uint32_t *pixels = wg_core_frame(&w, &h);
+        const uint32_t *pixels = tremu_core_frame(&w, &h);
         uint64_t hand_start = now_ns();
         if (pixels && w && h) {
             pthread_mutex_lock(&emu_lock);
@@ -722,7 +722,7 @@ static bool run_game(void) {
                 if (lit) atomic_store(&game_booting, false);
             }
             unsigned left_x = 0, right_x = 0, eye_w = 0;
-            bool stereo = wg_core_views(&left_x, &right_x, &eye_w);
+            bool stereo = tremu_core_views(&left_x, &right_x, &eye_w);
             shared_left_x = left_x;
             shared_right_x = right_x;
             shared_eye_w = stereo ? eye_w : 0;
@@ -739,11 +739,11 @@ static bool run_game(void) {
                     draw_sight(shared_frame + right_x, w, eye_w, h, -s, &guns[p], colours[p]);
                 }
             }
-            const uint8_t *layers = wg_core_layers();
+            const uint8_t *layers = tremu_core_layers();
             shared_has_layers = layers && shared_layers;
             shared_continuous = false;
             if (shared_has_layers) memcpy(shared_layers, layers, w * h);
-            else if (shared_layers && !stereo && options.voxels && options.ai_depth && w <= WFG_VOXEL_MAX && h <= WFG_VOXEL_MAX)
+            else if (shared_layers && !stereo && options.voxels && options.ai_depth && w <= TREMU_VOXEL_MAX && h <= TREMU_VOXEL_MAX)
                 shared_has_layers = shared_continuous = network_depth(pixels, w, h, shared_layers);
             shared_w = w;
             shared_h = h;
@@ -755,7 +755,7 @@ static bool run_game(void) {
         if (hand_time > hand_max) hand_max = hand_time;
         /* Absolute deadlines keep the arcade at its own rate; resync after a long stall. MAME only
          * knows the game's refresh once it runs (CarnEvil 56 Hz): a stale rate overflows the audio. */
-        period = (uint64_t)(1e9 / wg_core_fps());
+        period = (uint64_t)(1e9 / tremu_core_fps());
         next += period;
         uint64_t t = now_ns();
         if (next > t) {
@@ -774,19 +774,19 @@ static bool network_depth(const uint32_t *pixels, unsigned w, unsigned h, uint8_
     char path[256];
     snprintf(path, sizeof path, "%s/models/midas.tflite", SHARED_DIR);
     if (access(path, R_OK)) {
-        if (!asked) { LOG("depth model missing, downloading to %s", path); wfg_fetch_depth_model(path); }
+        if (!asked) { LOG("depth model missing, downloading to %s", path); tremu_fetch_depth_model(path); }
         asked = true;
         return false;
     }
-    if (!wfg_depth_start(path)) return false;
-    wfg_depth_submit(pixels, w, h);
-    return wfg_depth_get(out, w, h);
+    if (!tremu_depth_start(path)) return false;
+    tremu_depth_submit(pixels, w, h);
+    return tremu_depth_get(out, w, h);
 }
 
 /* Waits for CMD_LOAD, runs that game until the next command, and repeats. */
 static void *emulator_thread(void *arg) {
     (void)arg;
-    wfg_perf_emulator_thread();
+    tremu_perf_emulator_thread();
     while (!quit) {
         if (atomic_exchange(&emu_cmd, CMD_NONE) != CMD_LOAD) {
             sleep_ms(50);
@@ -795,8 +795,8 @@ static void *emulator_thread(void *arg) {
         atomic_store(&emu_state, 0);
         bool loaded = run_game();
         netplay_stop();
-        if (loaded) wg_core_close_game();
-        wfg_depth_stop();  /* frees the GPU; restarted by the next game that needs it */
+        if (loaded) tremu_core_close_game();
+        tremu_depth_stop();  /* frees the GPU; restarted by the next game that needs it */
         pthread_mutex_lock(&emu_lock);
         shared_w = shared_h = 0;
         pthread_mutex_unlock(&emu_lock);
@@ -814,13 +814,13 @@ static unsigned screen_left_x, screen_right_x, screen_eye_w;  /* what the screen
 
 static void upload_frame(unsigned *w, unsigned *h) {
     pthread_mutex_lock(&emu_lock);
-    voxel_view = options.voxels && shared_has_layers && shared_frame && shared_w <= WFG_VOXEL_MAX &&
-                 shared_h <= WFG_VOXEL_MAX &&
-                 wfg_voxel_init(instance, xr_system, session);
+    voxel_view = options.voxels && shared_has_layers && shared_frame && shared_w <= TREMU_VOXEL_MAX &&
+                 shared_h <= TREMU_VOXEL_MAX &&
+                 tremu_voxel_init(instance, xr_system, session);
     if (voxel_view) {
         *w = shared_w;
         *h = shared_h;
-        if (shared_seq != uploaded_seq) wfg_voxel_upload(shared_frame, shared_layers, *w, *h, shared_continuous);
+        if (shared_seq != uploaded_seq) tremu_voxel_upload(shared_frame, shared_layers, *w, *h, shared_continuous);
         uploaded_seq = shared_seq;
         pthread_mutex_unlock(&emu_lock);
         return;
@@ -879,7 +879,7 @@ static XrPosef screen_pose(void) {
 
 /* Projects the right controller's aim ray onto the screen quad. The gun angle and
  * down/back offsets correct a Touch controller mounted on top of a physical gun. */
-static void aim(XrTime time, float aspect, int hand, WgGun *gun) {
+static void aim(XrTime time, float aspect, int hand, TremuGun *gun) {
     gun->offscreen = true;
     XrSpaceLocation loc = {XR_TYPE_SPACE_LOCATION};
     if (XR_FAILED(xrLocateSpace(aim_space[hand], local_space, time, &loc))) return;
@@ -923,15 +923,15 @@ static void set_menu_open(bool open, XrTime time) {
     if (!open) search_request = false;
     if (!open && text_request) {
         text_request = false;
-        wg_core_text_submit(NULL);
+        tremu_core_text_submit(NULL);
     }
     if (open) {
         XrPosef head = screen_origin;
         head_yaw_pose(time, &head);
         menu_pose = (XrPosef){head.orientation, add(head.position, rotate(head.orientation, (XrVector3f){0, -.1f, -1.2f}))};
-        wfg_menu_reset();
+        tremu_menu_reset();
     } else {
-        wfg_menu_closed();
+        tremu_menu_closed();
     }
 }
 
@@ -941,7 +941,7 @@ static XrVector2f left_stick(void);
 static XrVector2f nav_stick(void) {
     XrVector2f s = left_stick();
     float gx, gy;
-    wfg_ext_stick(&gx, &gy);
+    tremu_ext_stick(&gx, &gy);
     if (fabsf(gx) > fabsf(s.x)) s.x = gx;
     if (fabsf(gy) > fabsf(s.y)) s.y = gy;
     return s;
@@ -978,16 +978,16 @@ static void game_haptics(uint64_t now, bool touch_trigger, bool p2_trigger) {
     static int last_magazine = -1;
     static uint64_t next_touch[HANDS];
     static bool was[HANDS];
-    unsigned shots = wfg_gun_shots();
+    unsigned shots = tremu_gun_shots();
     if (shots != last_shots) {
         if (last_shots) pulse(RIGHT, .8f, 35);
         last_shots = shots;
     }
-    int magazine = wfg_gun_magazine();
+    int magazine = tremu_gun_magazine();
     if (magazine == 1 && last_magazine == 0) pulse(RIGHT, 1.f, 120);
     last_magazine = magazine;
     static bool bolt_was;
-    bool bolt = wfg_gun_bolt_pressed(now);
+    bool bolt = tremu_gun_bolt_pressed(now);
     if (bolt && !bolt_was) pulse(RIGHT, 1.f, 80);
     bolt_was = bolt;
     const bool down[HANDS] = {[LEFT] = p2_trigger, [RIGHT] = touch_trigger};
@@ -1003,17 +1003,17 @@ static void game_haptics(uint64_t now, bool touch_trigger, bool p2_trigger) {
 /* Starts a game in the emulator thread; ip, when set, joins that host's two-headset game. */
 static void launch_game(const char *rom, const char *key, const char *title, const char *ip) {
     if (strstr(rom, "/wiiu/")) {  /* runs in our Cemu app */
-        if (!wfg_launch_wiiu(rom))
+        if (!tremu_launch_wiiu(rom))
             snprintf(carousel_footer, sizeof carousel_footer, "%s", T("Installe notre application Cemu pour jouer aux jeux Wii U"));
         return;
     }
     if (strstr(rom, "/ps3/")) {  /* runs in the ARMSX3 app */
-        if (!wfg_launch_ps3(rom))
+        if (!tremu_launch_ps3(rom))
             snprintf(carousel_footer, sizeof carousel_footer, "%s", T("Installe l'application ARMSX3 pour jouer aux jeux PS3"));
         return;
     }
     if (strstr(rom, "/vita/")) {  /* runs in our Vita3K app */
-        if (!wfg_launch_vita(rom))
+        if (!tremu_launch_vita(rom))
             snprintf(carousel_footer, sizeof carousel_footer, "%s", T("Installe notre application Vita3K pour jouer aux jeux PS Vita"));
         return;
     }
@@ -1036,20 +1036,20 @@ static void launch_game(const char *rom, const char *key, const char *title, con
 
 /* Starts a carousel entry: a game in the emulator thread, or another app. */
 static void launch_entry(int i) {
-    const WfgEntry *e = wfg_carousel_entry(i);
+    const TremuEntry *e = tremu_carousel_entry(i);
     if (!e) return;
     if (e->join_ip[0] && !e->rom[0]) {
         snprintf(carousel_footer, sizeof carousel_footer, T("Pour rejoindre, copie %s dans Download/Roms"), e->join_key);
         return;
     }
-    snprintf(options.game, sizeof options.game, "%s", wfg_entry_key(e));
-    wfg_options_save(options_path, &options);
+    snprintf(options.game, sizeof options.game, "%s", tremu_entry_key(e));
+    tremu_options_save(options_path, &options);
     if (e->package[0]) {
-        if (!wfg_launch_package(e->package))
+        if (!tremu_launch_package(e->package))
             snprintf(carousel_footer, sizeof carousel_footer, T("Impossible de lancer %s"), e->title);
         return;
     }
-    launch_game(e->rom, wfg_entry_key(e), e->title, e->join_ip);
+    launch_game(e->rom, tremu_entry_key(e), e->title, e->join_ip);
 }
 
 /* "Multijoueur" menu line: Solo, Host (Wi-Fi), Host (Internet), Join by code, then one "Join"
@@ -1083,7 +1083,7 @@ static void update_multiplayer_choices(void) {
         for (int i = 0; i < menu_host_count; i++)
             if (!strcmp(menu_hosts[i].ip, joined_ip)) current = MULTI_LAN_FIRST + i;
     }
-    wfg_menu_set_multiplayer((const char (*)[64])choices, count, current);
+    tremu_menu_set_multiplayer((const char (*)[64])choices, count, current);
 }
 
 static void back_to_carousel(void) {
@@ -1095,13 +1095,13 @@ static void back_to_carousel(void) {
 
 /* Joins the game rom_key hosted at host ("ip" or "ip:port"), if we have that ROM. */
 static void join_game(const char *rom_key, const char *host) {
-    int i = wfg_carousel_find_game(rom_key);
+    int i = tremu_carousel_find_game(rom_key);
     if (i < 0) {
         snprintf(carousel_footer, sizeof carousel_footer, T("Pour rejoindre, copie %s dans Download/Roms"), rom_key);
         back_to_carousel();
         return;
     }
-    const WfgEntry *e = wfg_carousel_entry(i);
+    const TremuEntry *e = tremu_carousel_entry(i);
     launch_game(e->rom, rom_key, e->title, host);
 }
 
@@ -1116,7 +1116,7 @@ static bool apply_multiplayer(int pick) {
         if (mode == MODE_GAME) atomic_store(&net_request, pick == MULTI_HOST ? NET_REQ_HOST : NET_REQ_HOST_INTERNET);
         joined_ip[0] = 0;
     } else if (pick == MULTI_CODE) {
-        wfg_menu_begin_code();
+        tremu_menu_begin_code();
         return false;
     } else if (pick - MULTI_LAN_FIRST < menu_host_count) {
         const NetHost *h = &menu_hosts[pick - MULTI_LAN_FIRST];
@@ -1129,7 +1129,7 @@ static bool apply_multiplayer(int pick) {
 static void start_code_query(const char *code) {
     uint32_t ip;
     uint16_t port;
-    if (!wfg_code_decode(code, &ip, &port)) {
+    if (!tremu_code_decode(code, &ip, &port)) {
         snprintf(carousel_footer, sizeof carousel_footer, T("Code invalide : %.5s-%.5s"), code, code + 5);
         back_to_carousel();
         return;
@@ -1161,7 +1161,7 @@ static void poll_code_query(void) {
 
 /* The Touch controllers as the console's pad, as set in the "console controls" menu (padmap.h).
  * The left stick moves: the cross on NES, SNES and PS1, the analog stick on N64 and PS2. */
-static void touch_pad(WfgPadConsole console, bool gun_trigger, bool gun_grenade, WgGun *g) {
+static void touch_pad(TremuPadConsole console, bool gun_trigger, bool gun_grenade, TremuGun *g) {
     enum { DEAD = 0x4000 };
     const int *map = options.pad_map[console];
     XrVector2f l = stick(LEFT), r = stick(RIGHT);
@@ -1180,8 +1180,8 @@ static void touch_pad(WfgPadConsole console, bool gun_trigger, bool gun_grenade,
     uint16_t pad = 0;
     for (int i = 0; i < TI_COUNT; i++)
         if (in[i] && map[i] >= 0 && map[i] < 16) pad |= 1u << map[i];
-    if (console == WFG_PAD_NES || console == WFG_PAD_SNES || console == WFG_PAD_PS1 || console == WFG_PAD_MEGADRIVE ||
-        console == WFG_PAD_SATURN) {
+    if (console == TREMU_PAD_NES || console == TREMU_PAD_SNES || console == TREMU_PAD_PS1 || console == TREMU_PAD_MEGADRIVE ||
+        console == TREMU_PAD_SATURN) {
         /* Digital pads: the left stick is the cross. */
         if (lx < -DEAD) pad |= 1u << RETRO_DEVICE_ID_JOYPAD_LEFT;
         if (lx > DEAD) pad |= 1u << RETRO_DEVICE_ID_JOYPAD_RIGHT;
@@ -1190,10 +1190,10 @@ static void touch_pad(WfgPadConsole console, bool gun_trigger, bool gun_grenade,
     }
     /* Right stick directions set to the pad's right stick pass through as analog. */
     int ax = 0, ay = 0;
-    if (ry < 0 && map[TI_RS_UP] == WFG_PAD_RIGHT_ANALOG) ay = ry;
-    if (ry > 0 && map[TI_RS_DOWN] == WFG_PAD_RIGHT_ANALOG) ay = ry;
-    if (rx < 0 && map[TI_RS_LEFT] == WFG_PAD_RIGHT_ANALOG) ax = rx;
-    if (rx > 0 && map[TI_RS_RIGHT] == WFG_PAD_RIGHT_ANALOG) ax = rx;
+    if (ry < 0 && map[TI_RS_UP] == TREMU_PAD_RIGHT_ANALOG) ay = ry;
+    if (ry > 0 && map[TI_RS_DOWN] == TREMU_PAD_RIGHT_ANALOG) ay = ry;
+    if (rx < 0 && map[TI_RS_LEFT] == TREMU_PAD_RIGHT_ANALOG) ax = rx;
+    if (rx > 0 && map[TI_RS_RIGHT] == TREMU_PAD_RIGHT_ANALOG) ax = rx;
     g->pad = pad;
     /* Whole steps of 256, as the network sends them, so both headsets of a party agree. */
     g->lx = (int16_t)((lx >> 8) * 256);
@@ -1204,8 +1204,8 @@ static void touch_pad(WfgPadConsole console, bool gun_trigger, bool gun_grenade,
 
 /* Syncs the controllers; drives the menu while it is open, the splash and carousel outside games,
  * otherwise fills the lightgun state. Touch and WonderFitter inputs are combined. */
-static void read_input(XrTime time, float aspect, WgGun guns[2]) {
-    WgGun g = {.offscreen = true}, p2 = {.offscreen = true};
+static void read_input(XrTime time, float aspect, TremuGun guns[2]) {
+    TremuGun g = {.offscreen = true}, p2 = {.offscreen = true};
     guns[0] = g;
     guns[1] = p2;
     XrActiveActionSet as = {action_set, XR_NULL_PATH};
@@ -1214,8 +1214,8 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
     si.activeActionSets = &as;
     if (session_state != XR_SESSION_STATE_FOCUSED || XR_FAILED(xrSyncActions(session, &si))) return;
     uint64_t now = now_ns();
-    bool ext_trigger = wfg_ext_pressed(EXT_TRIGGER);
-    bool trigger = axis(trigger_action, hand_path[RIGHT]) > .55f || wfg_gun_trigger_held(now) || ext_trigger;
+    bool ext_trigger = tremu_ext_pressed(EXT_TRIGGER);
+    bool trigger = axis(trigger_action, hand_path[RIGHT]) > .55f || tremu_gun_trigger_held(now) || ext_trigger;
     bool confirm = button(a_action, hand_path[RIGHT]) || trigger;
     bool confirmed = confirm && !confirm_was;
     confirm_was = confirm;
@@ -1225,9 +1225,9 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
     if (!menu_open && mode == MODE_GAME) {
         char ask_title[80], ask_text[64];
         unsigned ask_length = 0;
-        if (wg_core_text_pending(ask_title, sizeof ask_title, ask_text, sizeof ask_text, &ask_length)) {
+        if (tremu_core_text_pending(ask_title, sizeof ask_title, ask_text, sizeof ask_text, &ask_length)) {
             set_menu_open(true, time);
-            wfg_menu_begin_text(ask_title, ask_text, ask_length);
+            tremu_menu_begin_text(ask_title, ask_text, ask_length);
             text_request = true;
         }
     }
@@ -1238,15 +1238,15 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
         bool changed;
         static bool erase_was;
         bool erase = button(b_action, hand_path[RIGHT]);
-        if (erase && !erase_was) wfg_menu_text_erase();
+        if (erase && !erase_was) tremu_menu_text_erase();
         erase_was = erase;
-        MenuAction action = wfg_menu_input(stick.x, stick.y, confirm, now, &options, &changed);
+        MenuAction action = tremu_menu_input(stick.x, stick.y, confirm, now, &options, &changed);
         if (changed) {
-            wfg_options_store_gun(&options);
-            wfg_options_save(options_path, &options);
-            wg_core_set_crosshair(options.crosshair);
-            wg_core_set_vulkan_driver(options.x360_driver);
-            wg_core_set_stereo(options.stereo);
+            tremu_options_store_gun(&options);
+            tremu_options_save(options_path, &options);
+            tremu_core_set_crosshair(options.crosshair);
+            tremu_core_set_vulkan_driver(options.x360_driver);
+            tremu_core_set_stereo(options.stereo);
             atomic_store(&perf_dirty, true);
         }
         if (action == MENU_RECENTER) {
@@ -1255,17 +1255,17 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
         } else if (action == MENU_CLOSE) {
             set_menu_open(false, time);
         } else if (action == MENU_APPLY_MULTI) {
-            if (apply_multiplayer(wfg_menu_multiplayer_pick())) set_menu_open(false, time);
+            if (apply_multiplayer(tremu_menu_multiplayer_pick())) set_menu_open(false, time);
         } else if (action == MENU_QUIT) {
             quit = true;
         } else if (action == MENU_LANGUAGE) {
-            wfg_lang_set(NULL, NULL, options.language);
+            tremu_lang_set(NULL, NULL, options.language);
         } else if (action == MENU_EXT_LEARNED) {
             int learned[EXT_ROLES];
-            wfg_ext_learned(learned);
+            tremu_ext_learned(learned);
             memcpy(options.ext_buttons, learned, sizeof learned);
-            wfg_ext_set_bindings(options.ext_buttons);
-            wfg_options_save(options_path, &options);
+            tremu_ext_set_bindings(options.ext_buttons);
+            tremu_options_save(options_path, &options);
             LOG("gun controls learned: %d %d %d %d %d", learned[0], learned[1], learned[2], learned[3], learned[4]);
         } else if (action == MENU_SAVE_STATE || action == MENU_LOAD_STATE) {
             if (mode == MODE_GAME && atomic_load(&emu_state) == 1)
@@ -1274,19 +1274,19 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
                 set_state_message(T("Aucune partie en cours"));
         } else if (action == MENU_TEXT_ENTERED) {
             if (search_request) {
-                wfg_carousel_set_search(wfg_menu_text());
+                tremu_carousel_set_search(tremu_menu_text());
             } else {
                 text_request = false;
-                wg_core_text_submit(wfg_menu_text());
+                tremu_core_text_submit(tremu_menu_text());
             }
             set_menu_open(false, time);
         } else if (action == MENU_CODE_ENTERED) {
-            start_code_query(wfg_menu_code());
+            start_code_query(tremu_menu_code());
             set_menu_open(false, time);
         } else if (action == MENU_BACK) {
             if (mode == MODE_GAME && atomic_load(&one_game_process)) {
                 LOG("leaving the game: restarting the app");
-                wfg_restart_after_exit();
+                tremu_restart_after_exit();
                 quit = true;
             } else if (mode == MODE_GAME) {
                 atomic_store(&emu_state, 0);
@@ -1306,15 +1306,15 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
     if (mode == MODE_CAROUSEL) {
         static bool clear_was;
         bool clear = button(b_action, hand_path[RIGHT]);
-        if (clear && !clear_was && wfg_carousel_search()[0]) wfg_carousel_set_search("");
+        if (clear && !clear_was && tremu_carousel_search()[0]) tremu_carousel_set_search("");
         clear_was = clear;
         XrVector2f nav = nav_stick();
-        CarouselAction action = wfg_carousel_input(nav.x, nav.y, confirmed, now);
+        CarouselAction action = tremu_carousel_input(nav.x, nav.y, confirmed, now);
         if (action == CAROUSEL_LAUNCH) {
-            launch_entry(wfg_carousel_selected());
+            launch_entry(tremu_carousel_selected());
         } else if (action == CAROUSEL_SEARCH) {
             set_menu_open(true, time);
-            wfg_menu_begin_text(T("Rechercher un titre"), wfg_carousel_search(), 20);
+            tremu_menu_begin_text(T("Rechercher un titre"), tremu_carousel_search(), 20);
             search_request = true;
         }
         return;
@@ -1326,23 +1326,23 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
     int layout = atomic_load(&pad_layout);
     if (layout != PAD_NONE) {
         /* The right trigger and grip include the WonderFitter's and a Bluetooth gun's. */
-        g.aux_a = axis(grip_action, hand_path[RIGHT]) > .55f || wfg_gun_bolt_pressed(now) || wfg_ext_pressed(EXT_GRENADE);
-        touch_pad((WfgPadConsole)layout, trigger, g.aux_a, &g);
-        g.start = (g.pad >> RETRO_DEVICE_ID_JOYPAD_START & 1) || wfg_ext_pressed(EXT_START);
-        g.select = (g.pad >> RETRO_DEVICE_ID_JOYPAD_SELECT & 1) || wfg_ext_pressed(EXT_COIN);
-        g.reload = wfg_ext_pressed(EXT_ACTION);
+        g.aux_a = axis(grip_action, hand_path[RIGHT]) > .55f || tremu_gun_bolt_pressed(now) || tremu_ext_pressed(EXT_GRENADE);
+        touch_pad((TremuPadConsole)layout, trigger, g.aux_a, &g);
+        g.start = (g.pad >> RETRO_DEVICE_ID_JOYPAD_START & 1) || tremu_ext_pressed(EXT_START);
+        g.select = (g.pad >> RETRO_DEVICE_ID_JOYPAD_SELECT & 1) || tremu_ext_pressed(EXT_COIN);
+        g.reload = tremu_ext_pressed(EXT_ACTION);
         game_haptics(now, axis(trigger_action, hand_path[RIGHT]) > .55f || ext_trigger, false);
         guns[0] = g;
         return;
     }
-    g.aux_a = axis(grip_action, hand_path[RIGHT]) > .55f || wfg_gun_bolt_pressed(now) ||
-              wfg_ext_pressed(EXT_GRENADE);                                                  /* grenade */
+    g.aux_a = axis(grip_action, hand_path[RIGHT]) > .55f || tremu_gun_bolt_pressed(now) ||
+              tremu_ext_pressed(EXT_GRENADE);                                                  /* grenade */
     bool recalibrate = atomic_load(&guncon2);
     if (recalibrate) g.reload = button(a_action, hand_path[RIGHT]);
     else g.select = button(a_action, hand_path[RIGHT]);                                     /* coin */
-    g.select = g.select || wfg_ext_pressed(EXT_COIN);
-    g.reload = g.reload || wfg_ext_pressed(EXT_ACTION);
-    g.start = button(b_action, hand_path[RIGHT]) || wfg_ext_pressed(EXT_START);
+    g.select = g.select || tremu_ext_pressed(EXT_COIN);
+    g.reload = g.reload || tremu_ext_pressed(EXT_ACTION);
+    g.start = button(b_action, hand_path[RIGHT]) || tremu_ext_pressed(EXT_START);
     if (options.local_p2) {
         /* Player 2 on the left Touch: X coin (recalibrate on PS2), Y start, trigger fires, grip
          * second button (Time Crisis' pedal). */
@@ -1371,7 +1371,7 @@ static void handle_xr_events(void) {
                 XrSessionBeginInfo bi = {XR_TYPE_SESSION_BEGIN_INFO};
                 bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
                 session_running = XR_CHECK(xrBeginSession(session, &bi));
-                if (session_running) wfg_perf_session_begun();
+                if (session_running) tremu_perf_session_begun();
             } else if (session_state == XR_SESSION_STATE_STOPPING) {
                 xrEndSession(session);
                 session_running = false;
@@ -1390,7 +1390,7 @@ static bool resumed;
 /* Gamepads, mice and keyboards: buttons of Bluetooth/USB guns (see extgun.c). */
 static int32_t on_input(struct android_app *app, AInputEvent *event) {
     (void)app;
-    return wfg_ext_input(event);
+    return tremu_ext_input(event);
 }
 
 static void on_cmd(struct android_app *app, int32_t cmd) {
@@ -1411,16 +1411,16 @@ void android_main(struct android_app *app) {
     snprintf(internal_rom_dir, sizeof internal_rom_dir, "%s/roms", app->activity->internalDataPath);
     snprintf(unzip_dir, sizeof unzip_dir, "%s/unzipped", app->activity->internalDataPath);
     snprintf(drivers_dir, sizeof drivers_dir, "%s/drivers", app->activity->internalDataPath);
-    snprintf(options_path, sizeof options_path, "%s/wfgemu.cfg", app->activity->internalDataPath);
-    wfg_options_load(options_path, &options);
-    wfg_ext_set_bindings(options.ext_buttons);
-    wg_core_set_crosshair(options.crosshair);
-    wg_core_set_stereo(options.stereo);
-    wfg_menu_init(app->activity->vm, app->activity->clazz);
-    wg_core_set_android(app->activity->vm, app->activity->clazz);
-    wg_core_set_vulkan_driver(options.x360_driver);
-    wfg_lang_set(app->activity->vm, app->activity->clazz, options.language);
-    wfg_carousel_init(app->activity->vm, app->activity->clazz);
+    snprintf(options_path, sizeof options_path, "%s/tremu.cfg", app->activity->internalDataPath);
+    tremu_options_load(options_path, &options);
+    tremu_ext_set_bindings(options.ext_buttons);
+    tremu_core_set_crosshair(options.crosshair);
+    tremu_core_set_stereo(options.stereo);
+    tremu_menu_init(app->activity->vm, app->activity->clazz);
+    tremu_core_set_android(app->activity->vm, app->activity->clazz);
+    tremu_core_set_vulkan_driver(options.x360_driver);
+    tremu_lang_set(app->activity->vm, app->activity->clazz, options.language);
+    tremu_carousel_init(app->activity->vm, app->activity->clazz);
     mkdir(app->activity->internalDataPath, 0700);
     mkdir(core_save_dir, 0700);
     char fbneo_saves[600];
@@ -1457,14 +1457,14 @@ void android_main(struct android_app *app) {
             char xbox_games[600];
             snprintf(xbox_games, sizeof xbox_games, "%s/Xbox/games", SHARED_DIR);
             const char *rom_dirs[] = {shared_roms, internal_rom_dir, download_roms, xbox_games};
-            int count = wfg_carousel_scan(rom_dirs, 4, shared_banners);
+            int count = tremu_carousel_scan(rom_dirs, 4, shared_banners);
             for (int i = 0; i < count; i++)
-                if (!strcmp(wfg_entry_key(wfg_carousel_entry(i)), options.game)) wfg_carousel_select(i);
+                if (!strcmp(tremu_entry_key(tremu_carousel_entry(i)), options.game)) tremu_carousel_select(i);
             emu_started = pthread_create(&emu, NULL, emulator_thread, NULL) == 0;
-            /* Test hook: "am start ... --es wfg_game <path>" starts that game at once (works with the
+            /* Test hook: "am start ... --es tremu_game <path>" starts that game at once (works with the
              * headset off: the emulator thread loads it even while the XR session is idle). */
             char intent_game[sizeof core_rom];
-            if (wfg_intent_game(intent_game, sizeof intent_game)) {
+            if (tremu_intent_game(intent_game, sizeof intent_game)) {
                 const char *name = strrchr(intent_game, '/');
                 launch_game(intent_game, name ? name + 1 : intent_game, name ? name + 1 : intent_game, "");
             }
@@ -1491,10 +1491,10 @@ void android_main(struct android_app *app) {
                     snprintf(title, sizeof title, "%s", game_title);
                     pthread_mutex_unlock(&emu_lock);
                 }
-                wfg_perf_apply(&options, key, system);
-                if (!menu_open) wfg_menu_set_perf_game(key, title, system);
+                tremu_perf_apply(&options, key, system);
+                if (!menu_open) tremu_menu_set_perf_game(key, title, system);
             }
-            wfg_perf_tick();
+            tremu_perf_tick();
         }
 
         /* A game switch closes the current game: drop its screen, the next one may differ in size. */
@@ -1513,7 +1513,7 @@ void android_main(struct android_app *app) {
         pthread_mutex_lock(&emu_lock);
         float aspect = shared_aspect;
         pthread_mutex_unlock(&emu_lock);
-        WgGun guns[2];
+        TremuGun guns[2];
         if (menu_open) update_multiplayer_choices();
         read_input(fs.predictedDisplayTime, aspect, guns);
         pthread_mutex_lock(&emu_lock);
@@ -1523,7 +1523,7 @@ void android_main(struct android_app *app) {
         /* The arcade pauses while the menu is open or the headset menu has focus. */
         atomic_store(&emu_active, session_state == XR_SESSION_STATE_FOCUSED && !menu_open && mode == MODE_GAME);
         if (mode == MODE_GAME && atomic_load(&emu_state) == -1) {
-            const WfgEntry *e = wfg_carousel_entry(wfg_carousel_selected());
+            const TremuEntry *e = tremu_carousel_entry(tremu_carousel_selected());
             pthread_mutex_lock(&emu_lock);
             if (load_error[0])
                 snprintf(carousel_footer, sizeof carousel_footer, "%s : %s", e ? e->title : T("ce jeu"), load_error);
@@ -1541,7 +1541,7 @@ void android_main(struct android_app *app) {
             if (!splash_until) splash_until = now_ns() + 3000000000ull;
             if (now_ns() > splash_until) mode = MODE_CAROUSEL;
             if (!splash_chain) create_swapchain(SPLASH_WIDTH, SPLASH_HEIGHT, &splash_chain, &splash_images, &splash_image_count);
-            const uint32_t *logo = splash_chain && !splash_uploaded ? wfg_load_logo() : NULL;
+            const uint32_t *logo = splash_chain && !splash_uploaded ? tremu_load_logo() : NULL;
             if (logo && upload_pixels(splash_chain, splash_images, logo, SPLASH_WIDTH, SPLASH_HEIGHT)) splash_uploaded = true;
             if (!logo && !splash_uploaded && splash_chain) mode = MODE_CAROUSEL;  /* no logo: skip */
         }
@@ -1550,34 +1550,34 @@ void android_main(struct android_app *app) {
         /* Each gun keeps its own mounting (angle, drop, back), switched when it connects. */
         static unsigned gun_generation;
         char gun_name[32];
-        unsigned generation = wfg_gun_name(gun_name, sizeof gun_name);
+        unsigned generation = tremu_gun_name(gun_name, sizeof gun_name);
         if (generation != gun_generation) {
             gun_generation = generation;
-            if (wfg_options_use_gun(&options, gun_name)) LOG("gun %s: its own mounting restored", gun_name);
-            wfg_options_save(options_path, &options);
+            if (tremu_options_use_gun(&options, gun_name)) LOG("gun %s: its own mounting restored", gun_name);
+            tremu_options_save(options_path, &options);
         }
         poll_code_query();
-        wfg_carousel_poll_posters();
-        if (wfg_library_changed()) {
+        tremu_carousel_poll_posters();
+        if (tremu_library_changed()) {
             /* Files arrived through the "add games" page: list them, keeping the selection. */
             char key[64] = "";
-            const WfgEntry *sel = wfg_carousel_entry(wfg_carousel_selected());
-            if (sel) snprintf(key, sizeof key, "%s", wfg_entry_key(sel));
+            const TremuEntry *sel = tremu_carousel_entry(tremu_carousel_selected());
+            if (sel) snprintf(key, sizeof key, "%s", tremu_entry_key(sel));
             const char *rom_dirs[] = {shared_roms, internal_rom_dir, download_roms};
-            int count = wfg_carousel_scan(rom_dirs, 3, shared_banners);
+            int count = tremu_carousel_scan(rom_dirs, 3, shared_banners);
             for (int i = 0; i < count; i++)
-                if (!strcmp(wfg_entry_key(wfg_carousel_entry(i)), key)) wfg_carousel_select(i);
+                if (!strcmp(tremu_entry_key(tremu_carousel_entry(i)), key)) tremu_carousel_select(i);
         }
         static char library[128];
         static uint64_t next_library_check;
         if (now_ns() > next_library_check) {
-            wfg_library_info(library, sizeof library);
+            tremu_library_info(library, sizeof library);
             next_library_check = now_ns() + 3000000000ull;
         }
         static uint64_t next_join_refresh;
         if (now_ns() > next_join_refresh) {
             NetHost hosts[8];
-            wfg_carousel_set_joinable(hosts, netplay_discovered(hosts, 8));
+            tremu_carousel_set_joinable(hosts, netplay_discovered(hosts, 8));
             next_join_refresh = now_ns() + 500000000ull;
         }
         NetState net = netplay_state();
@@ -1614,7 +1614,7 @@ void android_main(struct android_app *app) {
                 pthread_mutex_unlock(&emu_lock);
                 snprintf(status, sizeof status, T("Chargement de %s"), title);
                 snprintf(status + strlen(status), sizeof status - strlen(status), "...   %u s", (unsigned)(ms / 1000));
-                const uint32_t *pixels = wfg_loading_render(key, title, status, (float)(ms % 1000) * 0.36f);
+                const uint32_t *pixels = tremu_loading_render(key, title, status, (float)(ms % 1000) * 0.36f);
                 if (pixels && upload_pixels(carousel_chain, carousel_images, pixels, CAROUSEL_WIDTH, CAROUSEL_HEIGHT))
                     carousel_uploaded = true;
             }
@@ -1625,20 +1625,20 @@ void android_main(struct android_app *app) {
             char footer[400];
             if (mode == MODE_GAME && joining) snprintf(footer, sizeof footer, "%s", net_status);
             else if (carousel_footer[0]) snprintf(footer, sizeof footer, "%s", carousel_footer);
-            else if (!wfg_carousel_count() && library[0])
+            else if (!tremu_carousel_count() && library[0])
                 snprintf(footer, sizeof footer, T("Aucun jeu : sur ton PC ou ton t\xC3\xA9l\xC3\xA9phone, ouvre %s"), library);
-            else if (!wfg_carousel_count()) snprintf(footer, sizeof footer, "%s", T("Aucun jeu : copie tes ROM dans Download/Roms et tes affiches dans Tremu/Banner"));
+            else if (!tremu_carousel_count()) snprintf(footer, sizeof footer, "%s", T("Aucun jeu : copie tes ROM dans Download/Roms et tes affiches dans Tremu/Banner"));
             else if (library[0] && now_ns() / 6000000000ull % 2)  /* alternates every 6 s with the controls */
                 snprintf(footer, sizeof footer, T("Ajouter des jeux : %s"), library);
             else {
-                const char *controls = wfg_carousel_in_bar()
+                const char *controls = tremu_carousel_in_bar()
                     ? T("Stick gauche : onglet ou loupe     Bas : revenir aux jeux     A / g\xC3\xA2" "chette : valider")
                     : T("Stick gauche : choisir     Haut : onglets et recherche     A / g\xC3\xA2" "chette : jouer     Menu : options");
-                const WfgEntry *shown = wfg_carousel_entry(wfg_carousel_selected());
+                const TremuEntry *shown = tremu_carousel_entry(tremu_carousel_selected());
                 if (shown && shown->detail[0]) snprintf(footer, sizeof footer, "%s     %s", shown->detail, controls);
                 else snprintf(footer, sizeof footer, "%s", controls);
             }
-            const uint32_t *pixels = carousel_chain ? wfg_carousel_render(fs.predictedDisplayPeriod / 1e9f, footer) : NULL;
+            const uint32_t *pixels = carousel_chain ? tremu_carousel_render(fs.predictedDisplayPeriod / 1e9f, footer) : NULL;
             if (pixels && upload_pixels(carousel_chain, carousel_images, pixels, CAROUSEL_WIDTH, CAROUSEL_HEIGHT))
                 carousel_uploaded = true;
         }
@@ -1655,7 +1655,7 @@ void android_main(struct android_app *app) {
             bool show_state = now_ns() < state_message_until;
             snprintf(footer, sizeof footer, "%s", show_state ? state_message : net_status);
             pthread_mutex_unlock(&emu_lock);
-            const uint32_t *menu_pixels = wfg_menu_render(&options, wfg_gun_connected(), footer);
+            const uint32_t *menu_pixels = tremu_menu_render(&options, tremu_gun_connected(), footer);
             if (menu_pixels && upload_pixels(menu_chain, menu_images, menu_pixels, MENU_WIDTH, MENU_HEIGHT))
                 menu_uploaded = true;
         }
@@ -1663,7 +1663,7 @@ void android_main(struct android_app *app) {
         unsigned w = 0, h = 0;
         if (screen_chain) upload_frame(&w, &h);
         XrCompositionLayerQuad quad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
-        quad.next = wfg_perf_quad_next();
+        quad.next = tremu_perf_quad_next();
         quad.space = local_space;
         quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
         quad.subImage.swapchain = screen_chain;
@@ -1703,14 +1703,14 @@ void android_main(struct android_app *app) {
         const XrCompositionLayerBaseHeader *layers[5];
         uint32_t layer_count = 0;
         /* Mixed-reality background: the room under everything else. */
-        const XrCompositionLayerBaseHeader *room = wfg_passthrough_layer(options.background);
+        const XrCompositionLayerBaseHeader *room = tremu_passthrough_layer(options.background);
         if (room) layers[layer_count++] = room;
-        wfg_voxel_set_see_through(room != NULL);
+        tremu_voxel_set_see_through(room != NULL);
         if (mode == MODE_SPLASH && splash_uploaded) layers[layer_count++] = (XrCompositionLayerBaseHeader *)&splash;
         else if ((show_carousel || show_loading) && carousel_uploaded) layers[layer_count++] = (XrCompositionLayerBaseHeader *)&carousel;
         else if (mode == MODE_GAME && w && h && voxel_view) {
             const XrCompositionLayerBaseHeader *voxels =
-                fs.shouldRender ? wfg_voxel_render(local_space, fs.predictedDisplayTime, quad.pose, quad.size.width, quad.size.height)
+                fs.shouldRender ? tremu_voxel_render(local_space, fs.predictedDisplayTime, quad.pose, quad.size.width, quad.size.height)
                                 : NULL;
             if (voxels) layers[layer_count++] = voxels;
         } else if (mode == MODE_GAME && w && h) {
@@ -1732,7 +1732,7 @@ void android_main(struct android_app *app) {
     quit = true;
     for (int i = 0; emu_started && i < 400 && !atomic_load(&emu_done); i++) sleep_ms(10);
     if (emu_started && !atomic_load(&emu_done)) LOG("emulator thread still busy, leaving anyway");
-    wfg_options_save(options_path, &options);
+    tremu_options_save(options_path, &options);
     if (session) xrDestroySession(session);
     if (instance) xrDestroyInstance(instance);
     ANativeActivity_finish(app->activity);

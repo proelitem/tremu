@@ -16,7 +16,7 @@ static XrPassthroughLayerFB layer = XR_NULL_HANDLE;
 static bool started, running;
 static int styled = -1;
 
-bool wfg_passthrough_supported(void) {
+bool tremu_passthrough_supported(void) {
     uint32_t count = 0;
     if (XR_FAILED(xrEnumerateInstanceExtensionProperties(NULL, 0, &count, NULL)) || !count) return false;
     XrExtensionProperties *props = calloc(count, sizeof *props);
@@ -29,7 +29,7 @@ bool wfg_passthrough_supported(void) {
     return found;
 }
 
-void wfg_passthrough_init(XrInstance instance, XrSession session) {
+void tremu_passthrough_init(XrInstance instance, XrSession session) {
 #define GET(name, fn) xrGetInstanceProcAddr(instance, name, (PFN_xrVoidFunction *)&fn)
     GET("xrCreatePassthroughFB", create_passthrough);
     GET("xrCreatePassthroughLayerFB", create_layer);
@@ -49,9 +49,9 @@ void wfg_passthrough_init(XrInstance instance, XrSession session) {
     LOG("passthrough %s", layer ? "ready" : "unavailable");
 }
 
-const XrCompositionLayerBaseHeader *wfg_passthrough_layer(int background) {
+const XrCompositionLayerBaseHeader *tremu_passthrough_layer(int background) {
     if (!layer) return NULL;
-    if (background == WFG_BACKGROUND_BLACK) {
+    if (background == TREMU_BACKGROUND_BLACK) {
         if (running && XR_SUCCEEDED(pause_layer(layer))) running = false;
         return NULL;
     }
@@ -61,7 +61,7 @@ const XrCompositionLayerBaseHeader *wfg_passthrough_layer(int background) {
     if (styled != background) {
         /* The dimmed room keeps the game in front without the room drawing the eye. */
         XrPassthroughStyleFB style = {XR_TYPE_PASSTHROUGH_STYLE_FB};
-        style.textureOpacityFactor = background == WFG_BACKGROUND_DIMMED ? .35f : 1.f;
+        style.textureOpacityFactor = background == TREMU_BACKGROUND_DIMMED ? .35f : 1.f;
         style.edgeColor = (XrColor4f){0, 0, 0, 0};
         if (XR_SUCCEEDED(set_style(layer, &style))) styled = background;
     }

@@ -1,0 +1,123 @@
+diff --git a/src/burn/drv/taito/d_taitomisc.cpp b/src/burn/drv/taito/d_taitomisc.cpp
+index bfa3e12..a597e74 100644
+--- a/src/burn/drv/taito/d_taitomisc.cpp
++++ b/src/burn/drv/taito/d_taitomisc.cpp
+@@ -5681,9 +5681,13 @@ static INT32 OpwolfDraw()
+ {
+ 	BurnTransferClear();
+ 	OpwolfCalcPalette();
++	TremuLayersBegin(1);	// the background layer is opaque
+ 	PC080SNDrawBgLayer(0, 1, TaitoChars, pTransDraw);
++	TremuLayersMark(1);
+ 	PC090OJDrawSprites(TaitoSpritesA);
++	TremuLayersMark(3);
+ 	PC080SNDrawFgLayer(0, 0, TaitoChars, pTransDraw);
++	TremuLayersMark(4);
+ 	BurnTransferCopy(TaitoPalette);
+ 
+ 	for (INT32 i = 0; i < nBurnGunNumPlayers; i++) {
+diff --git a/src/burn/tiles_generic.cpp b/src/burn/tiles_generic.cpp
+index ba540ff..de70e8b 100644
+--- a/src/burn/tiles_generic.cpp
++++ b/src/burn/tiles_generic.cpp
+@@ -139,6 +139,48 @@ void GenericTilesSetGfx(INT32 nNum, UINT8 *GfxBase, INT32 nDepth, INT32 nTileWid
+ // Colour-depth independant image transfer
+ 
+ UINT16* pTransDraw = NULL;
++
++static UINT8* pTremuLayers = NULL;
++static UINT16* pTremuSnapshot = NULL;
++static INT32 nTremuSize = 0;
++static UINT32 nTremuFrame = ~0U;
++
++void TremuLayersBegin(UINT8 base)
++{
++	INT32 size = nScreenWidth * nScreenHeight;
++	if (size <= 0 || pTransDraw == NULL) return;
++	if (size != nTremuSize) {
++		BurnFree(pTremuLayers);
++		BurnFree(pTremuSnapshot);
++		pTremuLayers = (UINT8*)BurnMalloc(size);
++		pTremuSnapshot = (UINT16*)BurnMalloc(size * sizeof(UINT16));
++		nTremuSize = (pTremuLayers && pTremuSnapshot) ? size : 0;
++		if (nTremuSize == 0) return;
++	}
++	memset(pTremuLayers, base, size);
++	memcpy(pTremuSnapshot, pTransDraw, size * sizeof(UINT16));
++	nTremuFrame = nCurrentFrame;
++}
++
++void TremuLayersMark(UINT8 layer)
++{
++	if (nTremuSize == 0 || nTremuFrame != nCurrentFrame) return;
++	for (INT32 i = 0; i < nTremuSize; i++) {
++		if (pTransDraw[i] != pTremuSnapshot[i]) {
++			pTremuLayers[i] = layer;
++			pTremuSnapshot[i] = pTransDraw[i];
++		}
++	}
++}
++
++UINT8* TremuLayersGet(INT32* width, INT32* height)
++{
++	// Only while the running driver reports layers (this frame or the one before).
++	if (nTremuSize == 0 || nTremuSize != nScreenWidth * nScreenHeight || nCurrentFrame - nTremuFrame > 1) return NULL;
++	*width = nScreenWidth;
++	*height = nScreenHeight;
++	return pTremuLayers;
++}
+ UINT8 *pPrioDraw = NULL;
+ 
+ static INT32 nTransWidth, nTransHeight;
+diff --git a/src/burn/tiles_generic.h b/src/burn/tiles_generic.h
+index 4387d22..934e9ca 100644
+--- a/src/burn/tiles_generic.h
++++ b/src/burn/tiles_generic.h
+@@ -255,6 +255,14 @@ void RenderCustomTile_Prio_TransMask_FlipXY_Clip(UINT16* pDestDraw, INT32 nWidth
+ // Colour-depth independant image transfer
+ 
+ extern UINT16* pTransDraw;
++
++// Tremu 3D view: layer of each pTransDraw pixel for drivers that report it. A driver calls
++// TremuLayersBegin(base) after clearing pTransDraw (base: layer of untouched pixels), then TremuLayersMark(n) after drawing each layer:
++// the pixels that layer changed take depth class n (1 background, 3 sprites, 4 foreground...).
++void TremuLayersBegin(UINT8 base);
++void TremuLayersMark(UINT8 layer);
++// The last frame's layers (nScreenWidth x nScreenHeight, top row first), or NULL.
++UINT8* TremuLayersGet(INT32* width, INT32* height);
+ extern UINT8* pPrioDraw;
+ 
+ void BurnTransferClear();
+diff --git a/src/burner/libretro/libretro.cpp b/src/burner/libretro/libretro.cpp
+index 9e89835..3bc765e 100644
+--- a/src/burner/libretro/libretro.cpp
++++ b/src/burner/libretro/libretro.cpp
+@@ -1366,6 +1366,17 @@ static void VideoBufferInit()
+ 		memset(pVidImage, 0, nSize);
+ }
+ 
++// Tremu: layer of each pixel of the last frame (see TremuLayersBegin), top row first.
++UINT8* TremuLayersGet(INT32* width, INT32* height);
++extern "C" RETRO_API const UINT8 *tremu_layers(unsigned *width, unsigned *height)
++{
++	INT32 w = 0, h = 0;
++	UINT8 *layers = TremuLayersGet(&w, &h);
++	*width = (unsigned)w;
++	*height = (unsigned)h;
++	return layers;
++}
++
+ void retro_run()
+ {
+ 	bool bEnableVideo  = true;
+diff --git a/src/burner/libretro/link.T b/src/burner/libretro/link.T
+index b0c262d..a86b7db 100644
+--- a/src/burner/libretro/link.T
++++ b/src/burner/libretro/link.T
+@@ -1,5 +1,5 @@
+ {
+-   global: retro_*;
++   global: retro_*; tremu_layers;
+    local: *;
+ };
+ 

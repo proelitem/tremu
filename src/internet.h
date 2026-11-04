@@ -9,13 +9,13 @@
  * - STUN (free public servers) tells the host its public address.
  * - UPnP asks the host's router to open the game port. */
 
-enum { WFG_CODE_LENGTH = 10 };
-extern const char WFG_CODE_ALPHABET[33];
+enum { TREMU_CODE_LENGTH = 10 };
+extern const char TREMU_CODE_ALPHABET[33];
 
 /* ip and port in host byte order. out gets "XXXXX-XXXXX". */
-void wfg_code_encode(uint32_t ip, uint16_t port, char out[12]);
+void tremu_code_encode(uint32_t ip, uint16_t port, char out[12]);
 /* Accepts dashes, spaces and lowercase; O→0 and I/L→1. False on a malformed code. */
-bool wfg_code_decode(const char *code, uint32_t *ip, uint16_t *port);
+bool tremu_code_decode(const char *code, uint32_t *ip, uint16_t *port);
 
 /* Resolves the public STUN servers (blocking DNS). */
 int stun_servers(struct sockaddr_in *out, int max);

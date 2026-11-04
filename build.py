@@ -19,40 +19,40 @@ ADB = Path(r'C:\Program Files\Meta Quest Developer Hub\resources\bin\adb.exe')
 BUILD = ROOT / 'build'
 PACKAGE = 'com.tremu.app'
 LIBS = {
-    'libwfgemu.so': BUILD / 'native' / 'libwfgemu.so',
+    'libtremu.so': BUILD / 'native' / 'libtremu.so',
     'libopenxr_loader.so': TOOLS / 'openxr/prefab/modules/openxr_loader/libs/android.arm64-v8a/libopenxr_loader.so',
     # FBNeo knows the user's opwolf chips (recent MAME wants extra C-Chip dumps, MAME 2003-Plus an older .29).
     # Our FBNeo build (../_src/FBNeo, ndk-build): reports layers for the 3D view (Operation Wolf...).
-    'libwfgemu_core.so': ROOT / 'third_party' / 'fbneo_wfg_libretro_android.so',
+    'libtremu_core.so': ROOT / 'third_party' / 'fbneo_tremu_libretro_android.so',
     # Our MAME 0.289 (../_src/mame-wfg, tools/build_mame.sh, ARM64 recompiler) for the sets FBNeo lacks, in a "mame" folder: Area 51,
     # CarnEvil... (their hard disk .chd goes in the set's folder).
-    'libwfgemu_mame.so': ROOT / 'third_party' / 'mame_wfg_libretro_android.so',
+    'libtremu_mame.so': ROOT / 'third_party' / 'mame_tremu_libretro_android.so',
     # Console cores, picked by src/systems.c from the game file (libretro buildbot, arm64-v8a).
     # Our FCEUmm build (../_src/libretro-fceumm, ndk-build): also reports each pixel's layer for the 3D view.
-    'libwfgemu_fceumm.so': ROOT / 'third_party' / 'fceumm_wfg_libretro_android.so',
-    'libwfgemu_snes9x.so': ROOT / 'third_party' / 'snes9x_libretro_android.so',
+    'libtremu_fceumm.so': ROOT / 'third_party' / 'fceumm_tremu_libretro_android.so',
+    'libtremu_snes9x.so': ROOT / 'third_party' / 'snes9x_libretro_android.so',
     # Nintendo 64: our Mupen64Plus-Next GLES3 build (../_src/mupen-wfg), the scene drawn once per eye.
-    'libwfgemu_n64.so': ROOT / 'third_party' / 'mupen_wfg_libretro_android.so',
+    'libtremu_n64.so': ROOT / 'third_party' / 'mupen_tremu_libretro_android.so',
     # Mega Drive / Genesis, Master System, Game Gear (libretro buildbot's Genesis Plus GX).
-    'libwfgemu_genesis.so': ROOT / 'third_party' / 'genesis_plus_gx_libretro_android.so',
+    'libtremu_genesis.so': ROOT / 'third_party' / 'genesis_plus_gx_libretro_android.so',
     # Saturn (libretro buildbot's Beetle Saturn: the only Saturn core with the Virtua Gun).
-    'libwfgemu_saturn.so': ROOT / 'third_party' / 'mednafen_saturn_libretro_android.so',
-    'libwfgemu_pcsx.so': ROOT / 'third_party' / 'pcsx_rearmed_libretro_android.so',
+    'libtremu_saturn.so': ROOT / 'third_party' / 'mednafen_saturn_libretro_android.so',
+    'libtremu_pcsx.so': ROOT / 'third_party' / 'pcsx_rearmed_libretro_android.so',
     # Dreamcast and Naomi, drawn with OpenGL ES (core.c reads each frame back).
-    'libwfgemu_flycast.so': ROOT / 'third_party' / 'flycast_libretro_android.so',
+    'libtremu_flycast.so': ROOT / 'third_party' / 'flycast_libretro_android.so',
     # Wii and GameCube; its Data/Sys folder goes in the assets (see dolphin_sys).
-    'libwfgemu_dolphin.so': ROOT / 'third_party' / 'dolphin_libretro_android.so',
+    'libtremu_dolphin.so': ROOT / 'third_party' / 'dolphin_libretro_android.so',
     # Namco System 246/256 arcade (Time Crisis 3/4...): our Play! build (../_src/Play-, arcade boot and light gun).
-    'libwfgemu_play.so': ROOT / 'third_party' / 'play_wfg_libretro_android.so',
+    'libtremu_play.so': ROOT / 'third_party' / 'play_tremu_libretro_android.so',
     # PS2 discs with the GunCon 2: our LRPS2 build (../_src/ps2, usb-guncon2.cpp).
-    'libwfgemu_pcsx2.so': ROOT / 'third_party' / 'pcsx2_wfg_libretro_android.so',
-    # Xbox 360: our XenDroid build (../_src/xendroid, Xenia + wfg_libretro.cpp), see tools/build_xenia.py.
-    'libwfgemu_xenia.so': ROOT / 'third_party' / 'xenia_wfg_libretro_android.so',
-    # Original Xbox: our xemu build (../_src/x1box + wfg_xemu.cpp), see tools/build_xemu.py; it needs SDL.
-    'libwfgemu_xemu.so': ROOT / 'third_party' / 'xemu_wfg_libretro_android.so',
+    'libtremu_pcsx2.so': ROOT / 'third_party' / 'pcsx2_tremu_libretro_android.so',
+    # Xbox 360: our XenDroid build (../_src/xendroid, Xenia + tremu_libretro.cpp), see tools/build_xenia.py.
+    'libtremu_xenia.so': ROOT / 'third_party' / 'xenia_tremu_libretro_android.so',
+    # Original Xbox: our xemu build (../_src/x1box + tremu_xemu.cpp), see tools/build_xemu.py; it needs SDL.
+    'libtremu_xemu.so': ROOT / 'third_party' / 'xemu_tremu_libretro_android.so',
     'libSDL2.so': ROOT / 'third_party' / 'libSDL2.so',
     # PSP: our PPSSPP build (../_src/ppsspp, tools/build_ppsspp.py), with the relay Internet play needs; its data goes in the assets.
-    'libwfgemu_ppsspp.so': ROOT / 'third_party' / 'ppsspp_libretro_android.so',
+    'libtremu_ppsspp.so': ROOT / 'third_party' / 'ppsspp_libretro_android.so',
     # TensorFlow Lite 2.16.1 (Apache 2.0, official AARs): depth network of the 3D view, see src/depth.c.
     'libtensorflowlite_jni.so': ROOT / 'third_party' / 'libtensorflowlite_jni.so',
     'libtensorflowlite_gpu_jni.so': ROOT / 'third_party' / 'libtensorflowlite_gpu_jni.so',
@@ -108,7 +108,7 @@ def package():
     res.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / 'branding' / 'tremu-icon.png', res / 'ic_launcher.png')
     run(BT / 'aapt2.exe', 'compile', '--dir', BUILD / 'res', '-o', BUILD / 'res.zip')
-    # Splash logo, read by WfgActivity.loadAsset.
+    # Splash logo, read by TremuActivity.loadAsset.
     assets = BUILD / 'assets'
     assets.mkdir(exist_ok=True)
     shutil.copy2(ROOT / 'branding' / 'tremu-logo.png', assets / 'logo.png')
@@ -134,7 +134,7 @@ def package():
         for name, source in libs.items():
             staged = BUILD / name
             shutil.copy2(source, staged)
-            if name == 'libwfgemu.so':
+            if name == 'libtremu.so':
                 run(strip, '--strip-unneeded', staged)
             z.write(staged, 'lib/arm64-v8a/' + name)
     run(BT / 'zipalign.exe', '-f', '-P', '16', '4', base, aligned)

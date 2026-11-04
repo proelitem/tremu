@@ -15,7 +15,7 @@
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "Tremu", __VA_ARGS__)
 
 enum { MAX_ENTRIES = 512 };
-static WfgEntry entries[MAX_ENTRIES];
+static TremuEntry entries[MAX_ENTRIES];
 static int entry_count, local_count, selected;  /* entries [local_count, entry_count) are join tiles */
 static float position;
 static bool dirty = true;
@@ -40,7 +40,7 @@ JNIEXPORT void JNICALL Java_com_tremu_app_LibraryServer_nativeLibraryChanged(JNI
     atomic_store(&library_changed, true);
 }
 
-bool wfg_library_changed(void) { return atomic_exchange(&library_changed, false); }
+bool tremu_library_changed(void) { return atomic_exchange(&library_changed, false); }
 
 JNIEXPORT void JNICALL Java_com_tremu_app_Posters_nativePosterReady(JNIEnv *env, jclass cls) {
     (void)env; (void)cls;
@@ -63,7 +63,7 @@ static const struct { const char *package, *title, *name; } known_apps[] = {
     {"com.xmjssvr.BowArrowEn", "WonderFitter", "wonderfitter"},  /* WonderFitter's own app, with its gun */
 };
 
-void wfg_carousel_init(JavaVM *vm, jobject activity) {
+void tremu_carousel_init(JavaVM *vm, jobject activity) {
     jvm = vm;
     activity_ref = activity;
 }
@@ -91,7 +91,7 @@ static void find_banner(const char *banner_dir, const char *name, char *out, siz
 }
 
 static int compare_entries(const void *a, const void *b) {
-    return strcasecmp(((const WfgEntry *)a)->title, ((const WfgEntry *)b)->title);
+    return strcasecmp(((const TremuEntry *)a)->title, ((const TremuEntry *)b)->title);
 }
 
 /* Full title of an arcade set from the table bundled in the APK; false when unknown. */
@@ -127,10 +127,10 @@ static void fetch_missing_posters(const char *banner_dir) {
     for (int i = 0; i < entry_count; i++) {
         if (!entries[i].rom[0] || entries[i].banner[0]) continue;
         char name[64];
-        const char *key = wfg_entry_key(&entries[i]), *dot = strrchr(key, '.');
+        const char *key = tremu_entry_key(&entries[i]), *dot = strrchr(key, '.');
         snprintf(name, sizeof name, "%.*s", dot ? (int)(dot - key) : (int)strlen(key), key);
         /* "<libretro-thumbnails system, empty for arcade sets>\t<file name>\t<title>" */
-        const char *thumbnails = wfg_system_info((WfgSystem)entries[i].system)->thumbnails;
+        const char *thumbnails = tremu_system_info((TremuSystem)entries[i].system)->thumbnails;
         char request[256];
         snprintf(request, sizeof request, "%s\t%s\t%s", thumbnails ? thumbnails : "", name, entries[i].title);
         jstring s = (*env)->NewStringUTF(env, request);
@@ -149,7 +149,7 @@ static void fetch_missing_posters(const char *banner_dir) {
     LOG("asked for %d missing posters", missing);
 }
 
-bool wfg_library_info(char *out, size_t size) {
+bool tremu_library_info(char *out, size_t size) {
     out[0] = 0;
     JNIEnv *env = jni();
     if (!env) return false;
@@ -166,20 +166,20 @@ bool wfg_library_info(char *out, size_t size) {
     return out[0] != 0;
 }
 
-void wfg_carousel_poll_posters(void) {
+void tremu_carousel_poll_posters(void) {
     if (!atomic_exchange(&poster_ready, false)) return;
     for (int i = 0; i < local_count; i++) {
-        WfgEntry *e = &entries[i];
+        TremuEntry *e = &entries[i];
         if (!e->rom[0] || e->banner[0]) continue;
         char name[64];
-        const char *key = wfg_entry_key(e), *dot = strrchr(key, '.');
+        const char *key = tremu_entry_key(e), *dot = strrchr(key, '.');
         snprintf(name, sizeof name, "%.*s", dot ? (int)(dot - key) : (int)strlen(key), key);
         find_banner(scanned_banner_dir, name, e->banner, sizeof e->banner);
         if (e->banner[0]) dirty = true;
     }
 }
 
-void wfg_fetch_depth_model(const char *path) {
+void tremu_fetch_depth_model(const char *path) {
     JNIEnv *env = jni();
     if (!env) return;
     jclass cls = (*env)->GetObjectClass(env, activity_ref);
@@ -191,7 +191,7 @@ void wfg_fetch_depth_model(const char *path) {
     (*env)->DeleteLocalRef(env, cls);
 }
 
-bool wfg_zip_folder(const char *folder, const char *zip) {
+bool tremu_zip_folder(const char *folder, const char *zip) {
     JNIEnv *env = jni();
     if (!env) return false;
     jclass cls = (*env)->GetObjectClass(env, activity_ref);
@@ -205,7 +205,7 @@ bool wfg_zip_folder(const char *folder, const char *zip) {
     return ok;
 }
 
-bool wfg_unpack_asset(const char *asset, const char *dir) {
+bool tremu_unpack_asset(const char *asset, const char *dir) {
     JNIEnv *env = jni();
     if (!env) return false;
     jclass cls = (*env)->GetObjectClass(env, activity_ref);
@@ -219,7 +219,7 @@ bool wfg_unpack_asset(const char *asset, const char *dir) {
     return ok;
 }
 
-void wfg_restart_after_exit(void) {
+void tremu_restart_after_exit(void) {
     JNIEnv *env = jni();
     if (!env) return;
     jclass cls = (*env)->GetObjectClass(env, activity_ref);
@@ -229,7 +229,7 @@ void wfg_restart_after_exit(void) {
     (*env)->DeleteLocalRef(env, cls);
 }
 
-bool wfg_intent_game(char *path, size_t size) {
+bool tremu_intent_game(char *path, size_t size) {
     JNIEnv *env = jni();
     if (!env) return false;
     jclass cls = (*env)->GetObjectClass(env, activity_ref);
@@ -272,20 +272,20 @@ static void console_title(const char *name, const char *system, char *out, size_
 /* Adds a game: file is its path, file_name the last part, name the same without extension. */
 static void add_game(const char *file, const char *file_name, const char *name_in, int system, const char *banner_dir) {
     for (int i = 0; i < entry_count; i++)
-        if (!strcasecmp(wfg_entry_key(&entries[i]), file_name)) return;  /* the first folder wins */
-    WfgEntry *e = &entries[entry_count++];
+        if (!strcasecmp(tremu_entry_key(&entries[i]), file_name)) return;  /* the first folder wins */
+    TremuEntry *e = &entries[entry_count++];
     memset(e, 0, sizeof *e);
     e->system = system;
     char name[64];
     snprintf(name, sizeof name, "%s", name_in);
     snprintf(e->rom, sizeof e->rom, "%s", file);
         snprintf(e->title, sizeof e->title, "%s", name);
-        if (system == SYS_NAOMI && wfg_naomi_title(name))
-            snprintf(e->title, sizeof e->title, "%s", wfg_naomi_title(name));
+        if (system == SYS_NAOMI && tremu_naomi_title(name))
+            snprintf(e->title, sizeof e->title, "%s", tremu_naomi_title(name));
         else if (system == SYS_NAMCO246)
-            snprintf(e->title, sizeof e->title, "%s", wfg_namco_title(name));
+            snprintf(e->title, sizeof e->title, "%s", tremu_namco_title(name));
         else if (system != SYS_ARCADE && system != SYS_MAME)
-            console_title(name, wfg_system_info((WfgSystem)system)->label, e->title, sizeof e->title);
+            console_title(name, tremu_system_info((TremuSystem)system)->label, e->title, sizeof e->title);
         else if (!arcade_title(name, e->title, sizeof e->title))
             for (size_t k = 0; k < sizeof known_games / sizeof known_games[0]; k++)
                 if (!strcasecmp(name, known_games[k].name)) snprintf(e->title, sizeof e->title, "%s", known_games[k].title);
@@ -293,9 +293,9 @@ static void add_game(const char *file, const char *file_name, const char *name_i
 }
 
 /* Games of a system run by another app, one tile per game, whatever its files. rows_method is the
- * WfgActivity method listing them as (path, title, detail) triples: a Wii U game's update and DLC
+ * TremuActivity method listing them as (path, title, detail) triples: a Wii U game's update and DLC
  * only show in its details, a PS3 game's id. */
-static void add_external_games(const char *rows_method, WfgSystem system, const char *banner_dir) {
+static void add_external_games(const char *rows_method, TremuSystem system, const char *banner_dir) {
     JNIEnv *env = jni();
     if (!env) return;
     jclass cls = (*env)->GetObjectClass(env, activity_ref);
@@ -315,7 +315,7 @@ static void add_external_games(const char *rows_method, WfgSystem system, const 
         add_game(c[0], slash ? slash + 1 : c[0], c[1], system, banner_dir);
         if (entry_count > before) {
             snprintf(entries[before].detail, sizeof entries[before].detail, "%s", c[2]);
-            wfg_utf8_trim(entries[before].detail);
+            tremu_utf8_trim(entries[before].detail);
         }
         for (int k = 0; k < 3; k++) {
             (*env)->ReleaseStringUTFChars(env, s[k], c[k]);
@@ -339,16 +339,16 @@ static void scan_dir(const char *path, int depth, const char *banner_dir) {
         if (ent->d_type == DT_DIR) {
             if (depth == 0 && (!strcasecmp(ent->d_name, "wiiu") || !strcasecmp(ent->d_name, "ps3") || !strcasecmp(ent->d_name, "vita"))) continue;  /* add_external_games */
             /* The disc folder of a Namco set belongs to its .zip (Roms/timecrs3 with timecrs3.zip). */
-            if (wfg_namco_title(ent->d_name)) continue;
+            if (tremu_namco_title(ent->d_name)) continue;
             char title[64];
-            if (depth > 0 && wfg_in_mame_folder(file)) add_game(file, ent->d_name, ent->d_name, SYS_MAME, banner_dir);
+            if (depth > 0 && tremu_in_mame_folder(file)) add_game(file, ent->d_name, ent->d_name, SYS_MAME, banner_dir);
             else if (depth > 0 && arcade_title(ent->d_name, title, sizeof title)) add_game(file, ent->d_name, ent->d_name, SYS_ARCADE, banner_dir);
             else if (depth < 3) scan_dir(file, depth + 1, banner_dir);
             continue;
         }
         const char *dot = strrchr(ent->d_name, '.');
         if (!dot || is_support_archive(ent->d_name)) continue;
-        int system = wfg_system_detect(file);
+        int system = tremu_system_detect(file);
         if (system < 0) continue;
         char name[64];
         snprintf(name, sizeof name, "%.*s", (int)(dot - ent->d_name), ent->d_name);
@@ -372,7 +372,7 @@ static int system_tab(int system) {
     }
 }
 
-static bool entry_shown(const WfgEntry *e) {
+static bool entry_shown(const TremuEntry *e) {
     /* Installed apps and join tiles only appear under "all". */
     if (tab != TAB_ALL && (e->package[0] || e->join_key[0] || system_tab(e->system) != tab)) return false;
     size_t n = strlen(search);
@@ -398,7 +398,7 @@ static void rebuild_view(void) {
     dirty = true;
 }
 
-int wfg_carousel_scan(const char *const *rom_dirs, int rom_dir_count, const char *banner_dir) {
+int tremu_carousel_scan(const char *const *rom_dirs, int rom_dir_count, const char *banner_dir) {
     entry_count = 0;
     for (int d = 0; d < rom_dir_count; d++) scan_dir(rom_dirs[d], 0, banner_dir);
     add_external_games("wiiuRows", SYS_WIIU, banner_dir);
@@ -406,7 +406,7 @@ int wfg_carousel_scan(const char *const *rom_dirs, int rom_dir_count, const char
     add_external_games("vitaRows", SYS_VITA, banner_dir);
     for (size_t k = 0; k < sizeof known_apps / sizeof known_apps[0] && entry_count < MAX_ENTRIES; k++) {
         if (!package_installed(known_apps[k].package)) continue;
-        WfgEntry *e = &entries[entry_count++];
+        TremuEntry *e = &entries[entry_count++];
         memset(e, 0, sizeof *e);
         snprintf(e->title, sizeof e->title, "%s", known_apps[k].title);
         snprintf(e->package, sizeof e->package, "%s", known_apps[k].package);
@@ -424,11 +424,11 @@ int wfg_carousel_scan(const char *const *rom_dirs, int rom_dir_count, const char
     return entry_count;
 }
 
-int wfg_carousel_count(void) { return entry_count; }
-const WfgEntry *wfg_carousel_entry(int i) { return i >= 0 && i < entry_count ? &entries[i] : NULL; }
-int wfg_carousel_selected(void) { return visible_count ? selected : -1; }
+int tremu_carousel_count(void) { return entry_count; }
+const TremuEntry *tremu_carousel_entry(int i) { return i >= 0 && i < entry_count ? &entries[i] : NULL; }
+int tremu_carousel_selected(void) { return visible_count ? selected : -1; }
 
-void wfg_carousel_select(int i) {
+void tremu_carousel_select(int i) {
     if (i < 0 || i >= entry_count) return;
     selected = i;
     if (!entry_shown(&entries[i])) {
@@ -438,18 +438,18 @@ void wfg_carousel_select(int i) {
     rebuild_view();
 }
 
-void wfg_carousel_set_joinable(const NetHost *hosts, int count) {
-    WfgEntry joins[16];
+void tremu_carousel_set_joinable(const NetHost *hosts, int count) {
+    TremuEntry joins[16];
     int n = 0;
     for (int h = 0; h < count && n < 16 && local_count + n < MAX_ENTRIES; h++) {
-        WfgEntry *e = &joins[n++];
+        TremuEntry *e = &joins[n++];
         memset(e, 0, sizeof *e);
         snprintf(e->join_ip, sizeof e->join_ip, "%s", hosts[h].ip);
         snprintf(e->join_key, sizeof e->join_key, "%s", hosts[h].rom_key);
         snprintf(e->title, sizeof e->title, T("Rejoindre : %s"), hosts[h].title);
-        wfg_utf8_trim(e->title);
+        tremu_utf8_trim(e->title);
         for (int i = 0; i < local_count; i++)
-            if (!entries[i].package[0] && !strcasecmp(wfg_entry_key(&entries[i]), hosts[h].rom_key)) {
+            if (!entries[i].package[0] && !strcasecmp(tremu_entry_key(&entries[i]), hosts[h].rom_key)) {
                 snprintf(e->rom, sizeof e->rom, "%s", entries[i].rom);
                 snprintf(e->banner, sizeof e->banner, "%s", entries[i].banner);
             }
@@ -465,20 +465,20 @@ void wfg_carousel_set_joinable(const NetHost *hosts, int count) {
     rebuild_view();
 }
 
-int wfg_carousel_find_game(const char *key) {
+int tremu_carousel_find_game(const char *key) {
     for (int i = 0; i < local_count; i++)
-        if (!entries[i].package[0] && !strcasecmp(wfg_entry_key(&entries[i]), key)) return i;
+        if (!entries[i].package[0] && !strcasecmp(tremu_entry_key(&entries[i]), key)) return i;
     return -1;
 }
 
-const char *wfg_entry_key(const WfgEntry *e) {
+const char *tremu_entry_key(const TremuEntry *e) {
     if (e->join_key[0]) return e->join_key;
     if (e->package[0]) return e->package;
     const char *slash = strrchr(e->rom, '/');
     return slash ? slash + 1 : e->rom;
 }
 
-void wfg_carousel_set_search(const char *text) {
+void tremu_carousel_set_search(const char *text) {
     bar_focus = false;
     dirty = true;
     if (!strcmp(search, text)) return;
@@ -486,11 +486,11 @@ void wfg_carousel_set_search(const char *text) {
     rebuild_view();
 }
 
-const char *wfg_carousel_search(void) { return search; }
+const char *tremu_carousel_search(void) { return search; }
 
-bool wfg_carousel_in_bar(void) { return bar_focus; }
+bool tremu_carousel_in_bar(void) { return bar_focus; }
 
-CarouselAction wfg_carousel_input(float stick_x, float stick_y, bool confirmed, uint64_t now) {
+CarouselAction tremu_carousel_input(float stick_x, float stick_y, bool confirmed, uint64_t now) {
     int dy = fabsf(stick_y) <= fabsf(stick_x) ? 0 : stick_y > .6f ? 1 : stick_y < -.6f ? -1 : 0;
     if (dy && dy != stick_dir_y && (dy > 0) != bar_focus) {
         bar_focus = dy > 0;
@@ -535,7 +535,7 @@ static void to_gl(const jint *argb, uint32_t *out, int w, int h) {
         }
 }
 
-const uint32_t *wfg_carousel_render(float dt, const char *footer) {
+const uint32_t *tremu_carousel_render(float dt, const char *footer) {
     /* Wrap-around jumps (last → first) snap instead of scrolling past every poster. */
     if (fabsf(selected_view - position) > 1.5f) position = selected_view;
     float before = position;
@@ -543,7 +543,7 @@ const uint32_t *wfg_carousel_render(float dt, const char *footer) {
     if (fabsf(selected_view - position) < .002f) position = selected_view;
     if (strcmp(footer, last_footer)) {
         snprintf(last_footer, sizeof last_footer, "%s", footer);
-        wfg_utf8_trim(last_footer);
+        tremu_utf8_trim(last_footer);
         dirty = true;
     }
     if (!dirty && position == before) return NULL;
@@ -554,7 +554,7 @@ const uint32_t *wfg_carousel_render(float dt, const char *footer) {
     jobjectArray titles = (*env)->NewObjectArray(env, visible_count, string_class, NULL);
     jobjectArray banners = (*env)->NewObjectArray(env, visible_count, string_class, NULL);
     for (int i = 0; i < visible_count; i++) {
-        const WfgEntry *e = &entries[visible[i]];
+        const TremuEntry *e = &entries[visible[i]];
         jstring t = (*env)->NewStringUTF(env, e->title), b = (*env)->NewStringUTF(env, e->banner);
         (*env)->SetObjectArrayElement(env, titles, i, t);
         (*env)->SetObjectArrayElement(env, banners, i, b);
@@ -563,9 +563,9 @@ const uint32_t *wfg_carousel_render(float dt, const char *footer) {
     }
     jstring jfooter = (*env)->NewStringUTF(env, last_footer);
     /* Console of the chosen game, nothing for apps and join tiles. */
-    const WfgEntry *shown = visible_count ? &entries[selected] : NULL;
+    const TremuEntry *shown = visible_count ? &entries[selected] : NULL;
     jstring jconsole = (*env)->NewStringUTF(env, shown && !shown->package[0] && !shown->join_key[0]
-                                                     ? wfg_system_info((WfgSystem)shown->system)->label : "");
+                                                     ? tremu_system_info((TremuSystem)shown->system)->label : "");
     jstring jsearch = (*env)->NewStringUTF(env, search);
     jclass cls = (*env)->GetObjectClass(env, activity_ref);
     jmethodID m = (*env)->GetStaticMethodID(env, cls, "renderCarousel",
@@ -592,14 +592,14 @@ const uint32_t *wfg_carousel_render(float dt, const char *footer) {
     return carousel_pixels;
 }
 
-const uint32_t *wfg_loading_render(const char *key, const char *title, const char *status, float angle) {
+const uint32_t *tremu_loading_render(const char *key, const char *title, const char *status, float angle) {
     JNIEnv *env = jni();
     if (!env) return NULL;
-    int i = wfg_carousel_find_game(key);
+    int i = tremu_carousel_find_game(key);
     const char *banner = i >= 0 ? entries[i].banner : "";
     char line[400];
     snprintf(line, sizeof line, "%s", status);
-    wfg_utf8_trim(line);
+    tremu_utf8_trim(line);
     jstring jt = (*env)->NewStringUTF(env, title), jb = (*env)->NewStringUTF(env, banner), js = (*env)->NewStringUTF(env, line);
     jclass cls = (*env)->GetObjectClass(env, activity_ref);
     jmethodID m = (*env)->GetStaticMethodID(env, cls, "renderLoading", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;FII)[I");
@@ -619,7 +619,7 @@ const uint32_t *wfg_loading_render(const char *key, const char *title, const cha
     return result ? carousel_pixels : NULL;
 }
 
-const uint32_t *wfg_load_logo(void) {
+const uint32_t *tremu_load_logo(void) {
     JNIEnv *env = jni();
     if (!env) return NULL;
     jclass cls = (*env)->GetObjectClass(env, activity_ref);
@@ -651,12 +651,12 @@ static bool launch_in_app(const char *launch_method, const char *path) {
     return ok;
 }
 
-bool wfg_launch_wiiu(const char *path) { return launch_in_app("launchWiiu", path); }
+bool tremu_launch_wiiu(const char *path) { return launch_in_app("launchWiiu", path); }
 
-bool wfg_launch_ps3(const char *path) { return launch_in_app("launchPs3", path); }
-bool wfg_launch_vita(const char *path) { return launch_in_app("launchVita", path); }
+bool tremu_launch_ps3(const char *path) { return launch_in_app("launchPs3", path); }
+bool tremu_launch_vita(const char *path) { return launch_in_app("launchVita", path); }
 
-bool wfg_launch_package(const char *package) {
+bool tremu_launch_package(const char *package) {
     JNIEnv *env = jni();
     if (!env) return false;
     jclass cls = (*env)->GetObjectClass(env, activity_ref);

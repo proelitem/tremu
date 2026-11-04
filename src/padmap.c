@@ -17,8 +17,8 @@
 #define R2 RETRO_DEVICE_ID_JOYPAD_R2
 #define L3 RETRO_DEVICE_ID_JOYPAD_L3
 #define R3 RETRO_DEVICE_ID_JOYPAD_R3
-#define NO WFG_PAD_NOTHING
-#define RA WFG_PAD_RIGHT_ANALOG
+#define NO TREMU_PAD_NOTHING
+#define RA TREMU_PAD_RIGHT_ANALOG
 
 typedef struct Target {
     int id;
@@ -62,13 +62,13 @@ static const Target WII[] = {{NO, "Aucun"}, {B, "B"}, {A, "A"}, {X, "1"}, {Y, "2
 static const Target SAT[] = {{NO, "Aucun"}, {Y, "A"}, {B, "B"}, {A, "C"}, {L, "X"}, {X, "Y"}, {R, "Z"}, {L2, "L"},
                              {R2, "R"}, {START, "Start"}, {UP, "Haut"}, {DOWN, "Bas"}, {LEFT, "Gauche"}, {RIGHT, "Droite"}};
 
-/* Xenia (wfg_libretro.cpp): RetroPad B A, A B, Y X, X Y, L / R the bumpers, L2 / R2 the triggers. */
+/* Xenia (tremu_libretro.cpp): RetroPad B A, A B, Y X, X Y, L / R the bumpers, L2 / R2 the triggers. */
 static const Target X360[] = {{NO, "Aucun"}, {B, "A"}, {A, "B"}, {Y, "X"}, {X, "Y"}, {L, "LB"}, {R, "RB"},
                               {L2, "LT"}, {R2, "RT"}, {L3, "Clic stick gauche"}, {R3, "Clic stick droit"},
                               {SELECT, "Back"}, {START, "Start"}, {RA, "Stick droit"}, {UP, "Haut"}, {DOWN, "Bas"},
                               {LEFT, "Gauche"}, {RIGHT, "Droite"}};
 
-/* xemu (wfg_xemu.cpp): RetroPad B A, A B, Y X, X Y, L / R white and black, L2 / R2 the triggers. */
+/* xemu (tremu_xemu.cpp): RetroPad B A, A B, Y X, X Y, L / R white and black, L2 / R2 the triggers. */
 static const Target XBOX[] = {{NO, "Aucun"}, {B, "A"}, {A, "B"}, {Y, "X"}, {X, "Y"}, {L, "White"}, {R, "Black"},
                               {L2, "LT"}, {R2, "RT"}, {L3, "Clic stick gauche"}, {R3, "Clic stick droit"},
                               {SELECT, "Back"}, {START, "Start"}, {RA, "Stick droit"}, {UP, "Haut"}, {DOWN, "Bas"},
@@ -82,7 +82,7 @@ static const Target PSP[] = {{NO, "Aucun"}, {B, "\xE2\x9C\x95"}, {A, "\xE2\x97\x
 /* Our Vita3K (native_xr.cpp) reads this table from the settings when a game starts. */
 static const Target VITA[] = {{NO, "Aucun"}, {B, "\xE2\x9C\x95"}, {A, "\xE2\x97\x8B"}, {Y, "\xE2\x96\xA1"},
                               {X, "\xE2\x96\xB3"}, {L, "L"}, {R, "R"}, {SELECT, "Select"}, {START, "Start"},
-                              {WFG_PAD_TOUCH_FRONT, "\xC3\x89" "cran tactile"}, {WFG_PAD_TOUCH_REAR, "Tactile arri\xC3\xA8re"},
+                              {TREMU_PAD_TOUCH_FRONT, "\xC3\x89" "cran tactile"}, {TREMU_PAD_TOUCH_REAR, "Tactile arri\xC3\xA8re"},
                               {RA, "Stick droit"}, {UP, "Haut"}, {DOWN, "Bas"}, {LEFT, "Gauche"}, {RIGHT, "Droite"}};
 
 static const struct {
@@ -90,46 +90,46 @@ static const struct {
     const Target *targets;
     int count;
     int defaults[TI_COUNT];  /* A, B, X, Y, grips L R, triggers L R, right stick up down left right, clicks L R */
-} CONSOLES[WFG_PAD_CONSOLES] = {
-    [WFG_PAD_NES] = {"NES", "nes", NES, sizeof NES / sizeof NES[0], {A, B, START, SELECT, NO, NO, NO, NO, NO, NO, NO, NO, NO, NO}},
-    [WFG_PAD_SNES] = {"SNES", "snes", SNES, sizeof SNES / sizeof SNES[0],
+} CONSOLES[TREMU_PAD_CONSOLES] = {
+    [TREMU_PAD_NES] = {"NES", "nes", NES, sizeof NES / sizeof NES[0], {A, B, START, SELECT, NO, NO, NO, NO, NO, NO, NO, NO, NO, NO}},
+    [TREMU_PAD_SNES] = {"SNES", "snes", SNES, sizeof SNES / sizeof SNES[0],
                       {Y, B, X, A, L, R, NO, NO, SELECT, START, NO, NO, NO, NO}},
-    [WFG_PAD_N64] = {"Nintendo 64", "n64", N64, sizeof N64 / sizeof N64[0],
+    [TREMU_PAD_N64] = {"Nintendo 64", "n64", N64, sizeof N64 / sizeof N64[0],
                      {B, Y, START, NO, L, R, L2, L2, RA, RA, RA, RA, NO, NO}},
-    [WFG_PAD_PS1] = {"PlayStation", "ps1", PS1, sizeof PS1 / sizeof PS1[0],
+    [TREMU_PAD_PS1] = {"PlayStation", "ps1", PS1, sizeof PS1 / sizeof PS1[0],
                      {A, B, X, Y, L, R, L2, R2, SELECT, START, L2, R2, L3, R3}},
-    [WFG_PAD_PS2] = {"PlayStation 2", "ps2", PS2, sizeof PS2 / sizeof PS2[0],
+    [TREMU_PAD_PS2] = {"PlayStation 2", "ps2", PS2, sizeof PS2 / sizeof PS2[0],
                      {A, B, X, Y, L, R, L2, R2, SELECT, START, L2, R2, L3, R3}},
-    [WFG_PAD_MEGADRIVE] = {"Mega Drive", "md", MD, sizeof MD / sizeof MD[0],
+    [TREMU_PAD_MEGADRIVE] = {"Mega Drive", "md", MD, sizeof MD / sizeof MD[0],
                            {B, A, Y, START, L, R, X, NO, SELECT, START, NO, NO, NO, NO}},
-    [WFG_PAD_DREAMCAST] = {"Dreamcast", "dc", DC, sizeof DC / sizeof DC[0],
+    [TREMU_PAD_DREAMCAST] = {"Dreamcast", "dc", DC, sizeof DC / sizeof DC[0],
                            {B, A, Y, X, L2, R2, L2, R2, NO, START, NO, NO, NO, NO}},
-    [WFG_PAD_GAMECUBE] = {"GameCube", "gc", GC, sizeof GC / sizeof GC[0],
+    [TREMU_PAD_GAMECUBE] = {"GameCube", "gc", GC, sizeof GC / sizeof GC[0],
                           {A, B, X, Y, START, R, L2, R2, RA, RA, RA, RA, NO, NO}},
-    [WFG_PAD_WII] = {"Wii", "wii", WII, sizeof WII / sizeof WII[0],
+    [TREMU_PAD_WII] = {"Wii", "wii", WII, sizeof WII / sizeof WII[0],
                      {SELECT, START, R2, X, Y, A, NO, B, UP, DOWN, LEFT, RIGHT, NO, NO}},
-    [WFG_PAD_SATURN] = {"Saturn", "saturn", SAT, sizeof SAT / sizeof SAT[0],
+    [TREMU_PAD_SATURN] = {"Saturn", "saturn", SAT, sizeof SAT / sizeof SAT[0],
                         {B, A, Y, START, L2, R2, L, R, X, NO, NO, NO, NO, NO}},
     /* The menu button belongs to Tremu: Start and Back go on the stick clicks. */
-    [WFG_PAD_X360] = {"Xbox 360", "x360", X360, sizeof X360 / sizeof X360[0],
+    [TREMU_PAD_X360] = {"Xbox 360", "x360", X360, sizeof X360 / sizeof X360[0],
                       {B, A, Y, X, L, R, L2, R2, RA, RA, RA, RA, START, SELECT}},
-    [WFG_PAD_XBOX] = {"Xbox", "xbox", XBOX, sizeof XBOX / sizeof XBOX[0],
+    [TREMU_PAD_XBOX] = {"Xbox", "xbox", XBOX, sizeof XBOX / sizeof XBOX[0],
                       {B, A, Y, X, L, R, L2, R2, RA, RA, RA, RA, START, SELECT}},
     /* The left stick is the analog nub, so the right stick gives the cross. */
-    [WFG_PAD_PSP] = {"PSP", "psp", PSP, sizeof PSP / sizeof PSP[0],
+    [TREMU_PAD_PSP] = {"PSP", "psp", PSP, sizeof PSP / sizeof PSP[0],
                      {B, A, Y, X, L, R, L, R, UP, DOWN, LEFT, RIGHT, START, SELECT}},
-    [WFG_PAD_VITA] = {"PS Vita", "vita", VITA, sizeof VITA / sizeof VITA[0],
-                      {B, A, Y, X, WFG_PAD_TOUCH_REAR, WFG_PAD_TOUCH_FRONT, L, R, RA, RA, RA, RA, WFG_PAD_TOUCH_REAR, START}},
+    [TREMU_PAD_VITA] = {"PS Vita", "vita", VITA, sizeof VITA / sizeof VITA[0],
+                      {B, A, Y, X, TREMU_PAD_TOUCH_REAR, TREMU_PAD_TOUCH_FRONT, L, R, RA, RA, RA, RA, TREMU_PAD_TOUCH_REAR, START}},
 };
 
-void wfg_padmap_defaults(WfgPadConsole console, int map[TI_COUNT]) {
+void tremu_padmap_defaults(TremuPadConsole console, int map[TI_COUNT]) {
     for (int i = 0; i < TI_COUNT; i++) map[i] = CONSOLES[console].defaults[i];
 }
 
-const char *wfg_pad_console_name(WfgPadConsole console) { return CONSOLES[console].name; }
-const char *wfg_pad_config_key(WfgPadConsole console) { return CONSOLES[console].key; }
+const char *tremu_pad_console_name(TremuPadConsole console) { return CONSOLES[console].name; }
+const char *tremu_pad_config_key(TremuPadConsole console) { return CONSOLES[console].key; }
 
-const char *wfg_touch_input_name(WfgTouchInput input) {
+const char *tremu_touch_input_name(TremuTouchInput input) {
     static const char *const names[TI_COUNT] = {
         "Bouton A", "Bouton B", "Bouton X", "Bouton Y", "Grip gauche", "Grip droit", "G\xC3\xA2" "chette gauche",
         "G\xC3\xA2" "chette droite", "Stick droit haut", "Stick droit bas", "Stick droit gauche", "Stick droit droite",
@@ -137,13 +137,13 @@ const char *wfg_touch_input_name(WfgTouchInput input) {
     return names[input];
 }
 
-const char *wfg_pad_target_name(WfgPadConsole console, int target) {
+const char *tremu_pad_target_name(TremuPadConsole console, int target) {
     for (int i = 0; i < CONSOLES[console].count; i++)
         if (CONSOLES[console].targets[i].id == target) return CONSOLES[console].targets[i].name;
     return "?";
 }
 
-int wfg_pad_target_next(WfgPadConsole console, WfgTouchInput input, int target, int step) {
+int tremu_pad_target_next(TremuPadConsole console, TremuTouchInput input, int target, int step) {
     int n = CONSOLES[console].count, at = 0;
     for (int i = 0; i < n; i++)
         if (CONSOLES[console].targets[i].id == target) at = i;

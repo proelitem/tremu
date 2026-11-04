@@ -1,0 +1,110 @@
+diff --git a/makefile b/makefile
+index 8c62521d..3fc61260 100644
+--- a/makefile
++++ b/makefile
+@@ -1247,7 +1247,7 @@ endif # ifdef RETRO
+ ifeq ($(OSD), retro)
+ #RETRO HACK no sdl for libretro android
+ $(PROJECTDIR)/$(MAKETYPE)-android-arm64/Makefile: makefile $(SCRIPTS) $(GENIE)
+-	$(SILENT) $(GENIE) $(PARAMS) $(TARGET_PARAMS) --gcc=android-arm64 --gcc_version=$(CLANG_VERSION) --osd=retro --targetos=android --PLATFORM=arm64 --NO_USE_MIDI=1 --NO_OPENGL=1 --USE_QTDEBUG=0 --DONT_USE_NETWORK=1 --NOASM=1 $(MAKETYPE)
++	$(SILENT) $(GENIE) $(PARAMS) $(TARGET_PARAMS) --gcc=android-arm64 --gcc_version=$(CLANG_VERSION) --osd=retro --targetos=android --PLATFORM=arm64 --NO_USE_MIDI=1 --NO_OPENGL=1 --USE_QTDEBUG=0 --DONT_USE_NETWORK=1 $(MAKETYPE)
+ 
+ .PHONY: android-arm64
+ android-arm64: android-ndk generate $(PROJECTDIR)/$(MAKETYPE)-android-arm64/Makefile
+diff --git a/src/mame/williams/seattle.cpp b/src/mame/williams/seattle.cpp
+index e9db8a62..2e996675 100644
+--- a/src/mame/williams/seattle.cpp
++++ b/src/mame/williams/seattle.cpp
+@@ -851,6 +851,12 @@ ioport_value seattle_state::gearshift_r()
+ *
+ *************************************/
+ 
++// Tremu: the game's factory calibration in NVRAM expects raw gun counts of about 253-1794 across the
++// picture and 19-237 down it (screen = (raw - offset) / scale: X offset 252.78, scale 3.861; Y offset 18.96,
++// scale 0.852). The 0-255 lightgun ports were sent as raw counts instead and landed off-screen.
++static int carnevil_gun_raw_x(int gun) { return 253 + gun * 1541 / 255; }
++static int carnevil_gun_raw_y(int gun) { return 19 + gun * 218 / 255; }
++
+ uint32_t seattle_state::carnevil_gun_r(offs_t offset)
+ {
+ 	uint32_t result = 0;
+@@ -858,39 +864,39 @@ uint32_t seattle_state::carnevil_gun_r(offs_t offset)
+ 	switch (offset)
+ 	{
+ 		case 0: // lower 8 bits of X
+-			result = (m_io_gun_x[0]->read() << 4) & 0xff;
++			result = carnevil_gun_raw_x(m_io_gun_x[0]->read()) & 0xff;
+ 			break;
+ 
+ 		case 1: // upper 4 bits of X
+-			result = (m_io_gun_x[0]->read() >> 4) & 0x0f;
++			result = (carnevil_gun_raw_x(m_io_gun_x[0]->read()) >> 8) & 0x0f;
+ 			result |= (m_io_fake->read() & 0x03) << 4;
+ 			result |= 0x40;
+ 			break;
+ 
+ 		case 2: // lower 8 bits of Y
+-			result = (m_io_gun_y[0]->read() << 2) & 0xff;
++			result = carnevil_gun_raw_y(m_io_gun_y[0]->read()) & 0xff;
+ 			break;
+ 
+ 		case 3: // upper 4 bits of Y
+-			result = (m_io_gun_y[0]->read() >> 6) & 0x03;
++			result = (carnevil_gun_raw_y(m_io_gun_y[0]->read()) >> 8) & 0x03;
+ 			break;
+ 
+ 		case 4: // lower 8 bits of X
+-			result = (m_io_gun_x[1]->read() << 4) & 0xff;
++			result = carnevil_gun_raw_x(m_io_gun_x[1]->read()) & 0xff;
+ 			break;
+ 
+ 		case 5: // upper 4 bits of X
+-			result = (m_io_gun_x[1]->read() >> 4) & 0x0f;
++			result = (carnevil_gun_raw_x(m_io_gun_x[1]->read()) >> 8) & 0x0f;
+ 			result |= (m_io_fake->read() & 0x30);
+ 			result |= 0x40;
+ 			break;
+ 
+ 		case 6: // lower 8 bits of Y
+-			result = (m_io_gun_y[1]->read() << 2) & 0xff;
++			result = carnevil_gun_raw_y(m_io_gun_y[1]->read()) & 0xff;
+ 			break;
+ 
+ 		case 7: // upper 4 bits of Y
+-			result = (m_io_gun_y[1]->read() >> 6) & 0x03;
++			result = (carnevil_gun_raw_y(m_io_gun_y[1]->read()) >> 8) & 0x03;
+ 			break;
+ 	}
+ 	return result;
+diff --git a/src/osd/libretro/libretro-internal/libretro.cpp b/src/osd/libretro/libretro-internal/libretro.cpp
+index 94d4feca..1f3eb902 100644
+--- a/src/osd/libretro/libretro-internal/libretro.cpp
++++ b/src/osd/libretro/libretro-internal/libretro.cpp
+@@ -987,6 +987,15 @@ bool retro_load_game(const struct retro_game_info *info)
+    return true;
+ }
+ 
++// running_machine::nvram_save is private, and changing machine.h would rebuild all of MAME: an explicit
++// template instantiation may name a private member.
++template <void (running_machine::*Save)()> struct tremu_nvram_access
++{
++   friend void tremu_nvram_save(running_machine &machine) { (machine.*Save)(); }
++};
++template struct tremu_nvram_access<&running_machine::nvram_save>;
++void tremu_nvram_save(running_machine &machine);
++
+ void retro_unload_game(void)
+ {
+    if (     mame_machine_manager::instance() != NULL
+@@ -995,6 +1004,11 @@ void retro_unload_game(void)
+          && (mame_machine_manager::instance()->machine()->system().flags & MACHINE_SUPPORTS_SAVE) != 0)
+ 	  mame_machine_manager::instance()->machine()->immediate_save("auto");
+ 
++   // Tremu: the frontend never calls retro_deinit (the process just ends), so the arcade's settings,
++   // scores and gun calibration would be lost without this.
++   if (mame_machine_manager::instance() != NULL && mame_machine_manager::instance()->machine() != NULL)
++      tremu_nvram_save(*mame_machine_manager::instance()->machine());
++
+    if (retro_pause == 0)
+       retro_pause = -1;
+ }

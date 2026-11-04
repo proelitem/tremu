@@ -1,0 +1,1154 @@
+diff --git a/android/app/src/main/cpp/CMakeLists.txt b/android/app/src/main/cpp/CMakeLists.txt
+index 46ba076..2f1fdb1 100644
+--- a/android/app/src/main/cpp/CMakeLists.txt
++++ b/android/app/src/main/cpp/CMakeLists.txt
+@@ -265,14 +265,20 @@ if(NOT ANDROID_API)
+ endif()
+ 
+ set(ANDROID_TRIPLE "aarch64-none-linux-android${ANDROID_API}")
+-set(NDK_TOOLCHAIN "${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64/bin")
++if(CMAKE_HOST_WIN32)
++  set(NDK_TOOLCHAIN "${NDK_PATH}/toolchains/llvm/prebuilt/windows-x86_64/bin")
++  set(NDK_CLANG_SUFFIX ".cmd")
++else()
++  set(NDK_TOOLCHAIN "${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64/bin")
++  set(NDK_CLANG_SUFFIX "")
++endif()
+ 
+ if(XEMU_XISO_CONVERTER_BUILD_ENABLED)
+   if(CMAKE_HOST_WIN32)
+     if(NOT DEFINED XISO_CONVERTER_RUSTUP_TOOLCHAIN OR
+        XISO_CONVERTER_RUSTUP_TOOLCHAIN STREQUAL "")
+       set(XISO_CONVERTER_RUSTUP_TOOLCHAIN
+-        "stable-x86_64-unknown-linux-gnu"
++        "stable-x86_64-pc-windows-gnu"
+         CACHE STRING "Rustup host toolchain for ISO->XISO converter"
+         FORCE
+       )
+@@ -304,7 +310,7 @@ if(XEMU_XISO_CONVERTER_BUILD_ENABLED)
+     "${XISO_CONVERTER_RS_TARGET_DIR}/${XISO_CONVERTER_RS_TARGET}/release/libxiso_converter_rs.a"
+   )
+   set(XISO_CONVERTER_RS_LINKER
+-    "${NDK_TOOLCHAIN}/aarch64-linux-android${ANDROID_API}-clang"
++    "${NDK_TOOLCHAIN}/aarch64-linux-android${ANDROID_API}-clang${NDK_CLANG_SUFFIX}"
+   )
+   set(XISO_CONVERTER_RS_AR "${NDK_TOOLCHAIN}/llvm-ar")
+ 
+@@ -370,7 +376,7 @@ if(CMAKE_HOST_WIN32)
+   if(NOT DEFINED DSP56300_RUSTUP_TOOLCHAIN OR
+      DSP56300_RUSTUP_TOOLCHAIN STREQUAL "")
+     set(DSP56300_RUSTUP_TOOLCHAIN
+-      "stable-x86_64-unknown-linux-gnu"
++      "stable-x86_64-pc-windows-gnu"
+       CACHE STRING "Rustup host toolchain for DSP56300 Android build"
+       FORCE
+     )
+@@ -403,7 +409,7 @@ set(DSP56300_RS_LIB
+ )
+ set(DSP56300_RS_INCLUDE_DIR "${DSP56300_RS_DIR}/include")
+ set(DSP56300_RS_LINKER
+-  "${NDK_TOOLCHAIN}/aarch64-linux-android${ANDROID_API}-clang"
++  "${NDK_TOOLCHAIN}/aarch64-linux-android${ANDROID_API}-clang${NDK_CLANG_SUFFIX}"
+ )
+ set(DSP56300_RS_AR "${NDK_TOOLCHAIN}/llvm-ar")
+ 
+@@ -479,7 +485,7 @@ file(WRITE "${GLIB_CROSS_FILE}"
+ "\n"
+ "[properties]\n"
+ "needs_exe_wrapper = true\n"
+-"sys_root = '${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64/sysroot'\n"
++"sys_root = '${NDK_TOOLCHAIN}/../sysroot'\n"
+ "c_args = ['--target=${ANDROID_TRIPLE}', '-I${CMAKE_CURRENT_LIST_DIR}/iconv_stub']\n"
+ "cpp_args = ['--target=${ANDROID_TRIPLE}', '-I${CMAKE_CURRENT_LIST_DIR}/iconv_stub']\n"
+ "c_link_args = ['--target=${ANDROID_TRIPLE}', '-L${ICONV_STUB_DIR}', '-liconv']\n"
+@@ -1170,6 +1176,7 @@ add_dependencies(slirp_static glib_ep)
+ 
+ add_library(xemu SHARED
+   xemu_android.cpp
++  tremu_xemu.cpp
+   android_crash_handler.cpp
+   vmstate_if_android.c
+   xemu_fatx_import.c
+diff --git a/android/app/src/main/cpp/xemu_android.cpp b/android/app/src/main/cpp/xemu_android.cpp
+index f1902e2..799fb56 100644
+--- a/android/app/src/main/cpp/xemu_android.cpp
++++ b/android/app/src/main/cpp/xemu_android.cpp
+@@ -202,7 +202,10 @@ static bool IsTcgTuningEnabled() {
+   return !(value && value[0] == '0');
+ }
+ 
++static bool g_tremu_mode;
++
+ static void LoadGameControllerMappingsFromAssets() {
++  if (g_tremu_mode) return;
+   constexpr const char* kDbAssetName = "gamecontrollerdb.txt";
+ 
+   JNIEnv* env = GetEnv();
+@@ -1175,6 +1178,37 @@ extern "C" int xemu_android_main(int argc, char** argv) {
+   return rc;
+ }
+ 
++// Tremu (tremu_xemu.cpp): direct paths instead of the app's setup wizard, default settings.
++static SetupFiles g_tremu_files;
++
++extern "C" void tremu_xemu_set_files(const char* base, const char* mcpx, const char* flash, const char* hdd,
++                                   const char* dvd) {
++  g_tremu_mode = true;
++  std::string b = base;
++  g_tremu_files.mcpx = mcpx;
++  g_tremu_files.flash = flash;
++  g_tremu_files.hdd = hdd;
++  g_tremu_files.dvd = dvd;
++  g_tremu_files.eeprom = b + "/eeprom.bin";
++  g_tremu_files.config_path = b + "/xemu.toml";
++  g_tremu_files.inline_aio_flag_path = b + "/inline_aio_required.flag";
++  g_tremu_files.audio_driver = "aaudio";
++  DisplaySettings ds;
++  ds.renderer = "opengl";
++  xemu_set_fp_safe(true);
++  xemu_set_fp_jit(ds.fp_jit);
++  xemu_set_fast_fences(false);
++  xemu_set_draw_reorder(true);
++  xemu_set_draw_merge(true);
++  xemu_set_bindless_textures(false);
++  xemu_set_async_compile(false);
++  xemu_set_frame_skip(false);
++  xemu_set_submit_frames(2);
++  xemu_set_tier1_threshold(64);
++  WriteConfigToml(g_tremu_files.config_path, g_tremu_files.mcpx, g_tremu_files.flash, g_tremu_files.hdd, g_tremu_files.dvd,
++                  g_tremu_files.eeprom, 256, ds);
++}
++
+ extern "C" int SDL_main(int argc, char* argv[]) {
+   (void)argc;
+   (void)argv;
+@@ -1194,7 +1228,7 @@ extern "C" int SDL_main(int argc, char* argv[]) {
+   LoadGameControllerMappingsFromAssets();
+ 
+   auto t_sync_start = SDL_GetTicks();
+-  SetupFiles setup = SyncSetupFiles();
++  SetupFiles setup = g_tremu_mode ? g_tremu_files : SyncSetupFiles();
+   auto t_sync_end = SDL_GetTicks();
+   __android_log_print(ANDROID_LOG_INFO, "xemu-android",
+                       "SyncSetupFiles took %u ms", t_sync_end - t_sync_start);
+@@ -1270,6 +1304,9 @@ extern "C" int SDL_main(int argc, char* argv[]) {
+       xemu_settings_set_string(&g_config.sys.files.eeprom_path, "");
+     }
+     setenv("XEMU_ANDROID_FORCE_CPU_BLIT", "0", 1);
++    if (g_tremu_mode) {
++      xemu_settings_set_string(&g_config.input.bindings.port1, "keyboard");  // fed by the Touch controllers
++    }
+     g_config.general.show_welcome = false;
+ 
+     // Apply the early renderer selection from activity prefs/runtime overrides.
+diff --git a/hw/ide/atapi.c b/hw/ide/atapi.c
+index a42b748..2c9d5f8 100644
+--- a/hw/ide/atapi.c
++++ b/hw/ide/atapi.c
+@@ -1308,7 +1308,6 @@ void ide_atapi_cmd(IDEState *s)
+     const struct AtapiCmd *cmd = &atapi_cmd_table[s->io_buffer[0]];
+ 
+     trace_ide_atapi_cmd(s, s->io_buffer[0]);
+-
+     if (trace_event_get_state_backends(TRACE_IDE_ATAPI_CMD_PACKET)) {
+         g_autoptr(GString) str =
+             qemu_hexdump_line(NULL, buf, ATAPI_PACKET_SIZE, 1, 0);
+diff --git a/hw/ide/core.c b/hw/ide/core.c
+index 26fb5a6..25d4757 100644
+--- a/hw/ide/core.c
++++ b/hw/ide/core.c
+@@ -2174,7 +2174,6 @@ void ide_bus_exec_cmd(IDEBus *bus, uint32_t val)
+ 
+     s = ide_bus_active_if(bus);
+     trace_ide_bus_exec_cmd(bus, s, val);
+-
+     /* ignore commands to non existent slave */
+     if (s != bus->ifs && !s->blk) {
+         return;
+diff --git a/hw/xbox/mcpx/apu/apu.c b/hw/xbox/mcpx/apu/apu.c
+index e3e68a7..2659796 100644
+--- a/hw/xbox/mcpx/apu/apu.c
++++ b/hw/xbox/mcpx/apu/apu.c
+@@ -132,6 +132,18 @@ static void throttle(MCPXAPUState *d)
+             break;
+         }
+         queued_bytes = monitor_num_used_bytes(d);
++#ifdef __ANDROID__
++        /* Tremu: a stalled audio output (headset asleep, stream write blocked)
++         * must not stop the APU: the guest kernel spins on APU progress and
++         * never reaches the game. Drop the queued audio and keep going. */
++        if (queued_bytes >= d->monitor.queued_bytes_high &&
++            qemu_clock_get_us(QEMU_CLOCK_REALTIME) - start_us > 250000) {
++            qemu_spin_lock(&d->monitor.fifo_lock);
++            fifo8_reset(&d->monitor.fifo);
++            qemu_spin_unlock(&d->monitor.fifo_lock);
++            break;
++        }
++#endif
+     }
+ 
+ #ifdef __ANDROID__
+diff --git a/hw/xbox/xid-gamepad.c b/hw/xbox/xid-gamepad.c
+index 319a957..94c14c2 100644
+--- a/hw/xbox/xid-gamepad.c
++++ b/hw/xbox/xid-gamepad.c
+@@ -126,6 +126,18 @@ static const XIDDesc desc_xid_xbox_gamepad_s = {
+     .wAlternateProductIds = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF },
+ };
+ 
++/* Tremu: Touch aim as an Xbox light gun; the game sees the subtype and enables its gun mode. */
++static const XIDDesc desc_xid_xbox_lightgun = {
++    .bLength = 0x10,
++    .bDescriptorType = USB_DT_XID,
++    .bcdXid = 0x100,
++    .bType = XID_DEVICETYPE_GAMEPAD,
++    .bSubType = XID_DEVICESUBTYPE_LIGHTGUN,
++    .bMaxInputReportSize = 20,
++    .bMaxOutputReportSize = 6,
++    .wAlternateProductIds = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF },
++};
++
+ static void usb_xid_gamepad_handle_data(USBDevice *dev, USBPacket *p)
+ {
+     USBXIDGamepadState *s = DO_UPCAST(USBXIDGamepadState, dev, dev);
+@@ -181,11 +193,15 @@ static void usb_xbox_gamepad_realize(USBDevice *dev, Error **errp)
+     s->out_state.length = sizeof(s->out_state);
+     s->out_state.report_id = 0;
+ 
+-    s->xid_desc = &desc_xid_xbox_gamepad;
++    s->xid_desc = getenv("TREMU_XBOX_GUN") ? &desc_xid_xbox_lightgun
++                                         : &desc_xid_xbox_gamepad;
+ 
+     memset(&s->in_state_capabilities, 0xFF, sizeof(s->in_state_capabilities));
+     s->in_state_capabilities.bLength = sizeof(s->in_state_capabilities);
+     s->in_state_capabilities.bReportId = 0;
++    if (s->xid_desc == &desc_xid_xbox_lightgun) {
++        s->in_state_capabilities.wButtons = 0xE0FF;
++    }
+ 
+     memset(&s->out_state_capabilities, 0xFF, sizeof(s->out_state_capabilities));
+     s->out_state_capabilities.length = sizeof(s->out_state_capabilities);
+diff --git a/hw/xbox/xid.c b/hw/xbox/xid.c
+index c37142b..b5e821b 100644
+--- a/hw/xbox/xid.c
++++ b/hw/xbox/xid.c
+@@ -95,6 +95,10 @@ void update_input(USBXIDGamepadState *s)
+         }
+     }
+ 
++    if (s->xid_desc->bSubType == XID_DEVICESUBTYPE_LIGHTGUN && tremu_gun_visible) {
++        s->in_state.wButtons |= XID_LIGHTGUN_LIGHT_VISIBLE;
++    }
++
+     s->in_state.bAnalogButtons[GAMEPAD_LEFT_TRIGGER] = state->axis[CONTROLLER_AXIS_LTRIG] >> 7;
+     s->in_state.bAnalogButtons[GAMEPAD_RIGHT_TRIGGER] = state->axis[CONTROLLER_AXIS_RTRIG] >> 7;
+     s->in_state.sThumbLX = state->axis[CONTROLLER_AXIS_LSTICK_X];
+@@ -153,6 +157,11 @@ void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
+                 p->status = USB_RET_STALL;
+             }
+             update_output(s);
++        } else if (value == 0x0201 &&
++                   s->xid_desc->bSubType == XID_DEVICESUBTYPE_LIGHTGUN) {
++            /* Calibration: the Touch aim is exact, the report is only accepted
++             * (House of the Dead III waits for it). */
++            p->actual_length = length;
+         } else {
+             p->status = USB_RET_STALL;
+             assert(false);
+diff --git a/hw/xbox/xid.h b/hw/xbox/xid.h
+index 5b84661..bb38d15 100644
+--- a/hw/xbox/xid.h
++++ b/hw/xbox/xid.h
+@@ -51,6 +51,10 @@
+ 
+ #define XID_DEVICESUBTYPE_GAMEPAD 0x01
+ #define XID_DEVICESUBTYPE_GAMEPAD_S 0x02
++#define XID_DEVICESUBTYPE_LIGHTGUN 0x50
++
++/* Byte 3 of the input report: the gun sees the screen. */
++#define XID_LIGHTGUN_LIGHT_VISIBLE 0x2000
+ 
+ #define TYPE_USB_XID_GAMEPAD "usb-xbox-gamepad"
+ #define TYPE_USB_XID_GAMEPAD_S "usb-xbox-gamepad-s"
+@@ -83,6 +87,8 @@ enum {
+ 
+ extern const USBDescStrings desc_strings;
+ 
++extern int tremu_gun_visible; /* Tremu: ui/xemu-input.c */
++
+ typedef struct XIDDesc {
+     uint8_t bLength;
+     uint8_t bDescriptorType;
+diff --git a/system/vl.c b/system/vl.c
+index 7fdfba2..33e31e8 100644
+--- a/system/vl.c
++++ b/system/vl.c
+@@ -2361,7 +2361,9 @@ static void qemu_read_default_config_file(Error **errp)
+ 
+     ret = qemu_read_config_file(file, qemu_parse_config_group, errp);
+     if (ret < 0) {
+-        if (ret == -ENOENT) {
++        /* Tremu: the configured directory belongs to another package here,
++         * so it gives EACCES. A missing optional file must not exit() the app. */
++        if (ret == -ENOENT || ret == -EACCES || ret == -EPERM) {
+             error_free(*errp);
+             *errp = NULL;
+         }
+diff --git a/thirdparty/SDL2/src/core/android/SDL_android.c b/thirdparty/SDL2/src/core/android/SDL_android.c
+index 86f272e..66bb09f 100644
+--- a/thirdparty/SDL2/src/core/android/SDL_android.c
++++ b/thirdparty/SDL2/src/core/android/SDL_android.c
+@@ -418,6 +418,9 @@ static int Android_JNI_SetEnv(JNIEnv *env)
+ /* Get local storage value */
+ JNIEnv *Android_JNI_GetEnv(void)
+ {
++    if (!mJavaVM) {
++        return NULL; /* Tremu test harness: no VM, mThreadKey never created */
++    }
+     /* Get JNIEnv from the Thread local storage */
+     JNIEnv *env = pthread_getspecific(mThreadKey);
+     if (!env) {
+@@ -508,6 +511,7 @@ static void register_methods(JNIEnv *env, const char *classname, JNINativeMethod
+     jclass clazz = (*env)->FindClass(env, classname);
+     if (!clazz || (*env)->RegisterNatives(env, clazz, methods, nb) < 0) {
+         __android_log_print(ANDROID_LOG_ERROR, "SDL", "Failed to register methods of %s", classname);
++        (*env)->ExceptionClear(env); /* Tremu: no Java classes, loaded from native code */
+         return;
+     }
+ }
+@@ -1402,6 +1406,9 @@ static void LocalReferenceHolder_Cleanup(struct LocalReferenceHolder *refholder)
+ 
+ ANativeWindow *Android_JNI_GetNativeWindow(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return NULL;
++    }
+     ANativeWindow *anw = NULL;
+     jobject s;
+     JNIEnv *env = Android_JNI_GetEnv();
+@@ -1417,6 +1424,9 @@ ANativeWindow *Android_JNI_GetNativeWindow(void)
+ 
+ void Android_JNI_SetActivityTitle(const char *title)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+ 
+     jstring jtitle = (*env)->NewStringUTF(env, title);
+@@ -1426,12 +1436,18 @@ void Android_JNI_SetActivityTitle(const char *title)
+ 
+ void Android_JNI_SetWindowStyle(SDL_bool fullscreen)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     (*env)->CallStaticVoidMethod(env, mActivityClass, midSetWindowStyle, fullscreen ? 1 : 0);
+ }
+ 
+ void Android_JNI_SetOrientation(int w, int h, int resizable, const char *hint)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+ 
+     jstring jhint = (*env)->NewStringUTF(env, (hint ? hint : ""));
+@@ -1441,12 +1457,18 @@ void Android_JNI_SetOrientation(int w, int h, int resizable, const char *hint)
+ 
+ void Android_JNI_MinizeWindow(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     (*env)->CallStaticVoidMethod(env, mActivityClass, midMinimizeWindow);
+ }
+ 
+ SDL_bool Android_JNI_ShouldMinimizeOnFocusLoss(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midShouldMinimizeOnFocusLoss);
+ }
+@@ -1478,6 +1500,9 @@ static jobject captureBuffer = NULL;
+ 
+ static void Android_JNI_GetAudioDevices(int *devices, int *length, int max_len, int is_input)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     jintArray result;
+ 
+@@ -1528,6 +1553,9 @@ void Android_DetectDevices(void)
+ 
+ int Android_JNI_OpenAudioDevice(int iscapture, int device_id, SDL_AudioSpec *spec)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     int audioformat;
+     jobject jbufobj = NULL;
+     jobject result;
+@@ -1658,6 +1686,9 @@ SDL_DisplayOrientation Android_JNI_GetDisplayOrientation(void)
+ 
+ int Android_JNI_GetDisplayDPI(float *ddpi, float *xdpi, float *ydpi)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+ 
+     jobject jDisplayObj = (*env)->CallStaticObjectMethod(env, mActivityClass, midGetDisplayDPI);
+@@ -1694,6 +1725,9 @@ void *Android_JNI_GetAudioBuffer(void)
+ 
+ void Android_JNI_WriteAudioBuffer(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+ 
+     switch (audioBufferFormat) {
+@@ -1719,6 +1753,9 @@ void Android_JNI_WriteAudioBuffer(void)
+ 
+ int Android_JNI_CaptureAudioBuffer(void *buffer, int buflen)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     jboolean isCopy = JNI_FALSE;
+     jint br = -1;
+@@ -1762,6 +1799,9 @@ int Android_JNI_CaptureAudioBuffer(void *buffer, int buflen)
+ 
+ void Android_JNI_FlushCapturedAudio(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+ #if 0 /* !!! FIXME: this needs API 23, or it'll do blocking reads and never end. */
+     switch (captureBufferFormat) {
+@@ -1807,6 +1847,9 @@ void Android_JNI_FlushCapturedAudio(void)
+ 
+ void Android_JNI_CloseAudioDevice(const int iscapture)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+ 
+     if (iscapture) {
+@@ -1828,6 +1871,9 @@ void Android_JNI_CloseAudioDevice(const int iscapture)
+ void Android_JNI_AudioSetThreadPriority(int iscapture, int device_id)
+ {
+     JNIEnv *env = Android_JNI_GetEnv();
++    if (!mAudioManagerClass) {
++        return; /* Tremu */
++    }
+     (*env)->CallStaticVoidMethod(env, mAudioManagerClass, midAudioSetThreadPriority, iscapture, device_id);
+ }
+ 
+@@ -1931,6 +1977,9 @@ static void Internal_Android_Destroy_AssetManager(void)
+ int Android_JNI_FileOpen(SDL_RWops *ctx,
+                          const char *fileName, const char *mode)
+ {
++    if (!mActivityClass) {
++        return -1; /* Tremu: no assets without the Java side */
++    }
+     AAsset *asset = NULL;
+     ctx->hidden.androidio.asset = NULL;
+ 
+@@ -1999,6 +2048,9 @@ int Android_JNI_FileClose(SDL_RWops *ctx)
+ 
+ int Android_JNI_SetClipboardText(const char *text)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     jstring string = (*env)->NewStringUTF(env, text);
+     (*env)->CallStaticVoidMethod(env, mActivityClass, midClipboardSetText, string);
+@@ -2008,6 +2060,9 @@ int Android_JNI_SetClipboardText(const char *text)
+ 
+ char *Android_JNI_GetClipboardText(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return SDL_strdup("");
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     char *text = NULL;
+     jstring string;
+@@ -2027,6 +2082,9 @@ char *Android_JNI_GetClipboardText(void)
+ 
+ SDL_bool Android_JNI_HasClipboardText(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     jboolean retval = (*env)->CallStaticBooleanMethod(env, mActivityClass, midClipboardHasText);
+     return (retval == JNI_TRUE) ? SDL_TRUE : SDL_FALSE;
+@@ -2038,6 +2096,9 @@ SDL_bool Android_JNI_HasClipboardText(void)
+  */
+ int Android_JNI_GetPowerInfo(int *plugged, int *charged, int *battery, int *seconds, int *percent)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     struct LocalReferenceHolder refs = LocalReferenceHolder_Setup(__FUNCTION__);
+     JNIEnv *env = Android_JNI_GetEnv();
+     jmethodID mid;
+@@ -2155,6 +2216,9 @@ int Android_JNI_GetPowerInfo(int *plugged, int *charged, int *battery, int *seco
+ /* Add all touch devices */
+ void Android_JNI_InitTouch(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     (*env)->CallStaticVoidMethod(env, mActivityClass, midInitTouch);
+ }
+@@ -2162,23 +2226,35 @@ void Android_JNI_InitTouch(void)
+ void Android_JNI_PollInputDevices(void)
+ {
+     JNIEnv *env = Android_JNI_GetEnv();
++    if (!mControllerManagerClass) {
++        return; /* Tremu */
++    }
+     (*env)->CallStaticVoidMethod(env, mControllerManagerClass, midPollInputDevices);
+ }
+ 
+ void Android_JNI_PollHapticDevices(void)
+ {
+     JNIEnv *env = Android_JNI_GetEnv();
++    if (!mControllerManagerClass) {
++        return; /* Tremu */
++    }
+     (*env)->CallStaticVoidMethod(env, mControllerManagerClass, midPollHapticDevices);
+ }
+ 
+ void Android_JNI_HapticRun(int device_id, float intensity, int length)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     (*env)->CallStaticVoidMethod(env, mControllerManagerClass, midHapticRun, device_id, intensity, length);
+ }
+ 
+ void Android_JNI_HapticStop(int device_id)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     (*env)->CallStaticVoidMethod(env, mControllerManagerClass, midHapticStop, device_id);
+ }
+@@ -2197,6 +2273,9 @@ int SDL_AndroidSendMessage(Uint32 command, int param)
+ /* sends message to be handled on the UI event dispatch thread */
+ int Android_JNI_SendMessage(int command, int param)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     jboolean success;
+     success = (*env)->CallStaticBooleanMethod(env, mActivityClass, midSendMessage, command, param);
+@@ -2210,6 +2289,9 @@ void Android_JNI_SuspendScreenSaver(SDL_bool suspend)
+ 
+ void Android_JNI_ShowScreenKeyboard(SDL_Rect *inputRect)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     (*env)->CallStaticBooleanMethod(env, mActivityClass, midShowTextInput,
+                                     inputRect->x,
+@@ -2227,6 +2309,9 @@ void Android_JNI_HideScreenKeyboard(void)
+ 
+ SDL_bool Android_JNI_IsScreenKeyboardShown(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     jboolean is_shown = 0;
+     is_shown = (*env)->CallStaticBooleanMethod(env, mActivityClass, midIsScreenKeyboardShown);
+@@ -2235,6 +2320,9 @@ SDL_bool Android_JNI_IsScreenKeyboardShown(void)
+ 
+ int Android_JNI_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *buttonid)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env;
+     jclass clazz;
+     jmethodID mid;
+@@ -2340,6 +2428,9 @@ void *SDL_AndroidGetJNIEnv(void)
+ 
+ void *SDL_AndroidGetActivity(void)
+ {
++    if (!mActivityClass) {
++        return NULL; /* Tremu */
++    }
+     /* See SDL_system.h for caveats on using this function. */
+ 
+     JNIEnv *env = Android_JNI_GetEnv();
+@@ -2365,30 +2456,45 @@ int SDL_GetAndroidSDKVersion(void)
+ 
+ SDL_bool SDL_IsAndroidTablet(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midIsTablet);
+ }
+ 
+ SDL_bool SDL_IsAndroidTV(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midIsAndroidTV);
+ }
+ 
+ SDL_bool SDL_IsChromebook(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midIsChromebook);
+ }
+ 
+ SDL_bool SDL_IsDeXMode(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midIsDeXMode);
+ }
+ 
+ void SDL_AndroidBackButton(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     (*env)->CallStaticVoidMethod(env, mActivityClass, midManualBackButton);
+ }
+@@ -2396,6 +2502,9 @@ void SDL_AndroidBackButton(void)
+ const char *SDL_AndroidGetInternalStoragePath(void)
+ {
+     static char *s_AndroidInternalFilesPath = NULL;
++    if (!mActivityClass) {
++        return SDL_getenv("TREMU_XEMU_BASE"); /* Tremu */
++    }
+ 
+     if (!s_AndroidInternalFilesPath) {
+         struct LocalReferenceHolder refs = LocalReferenceHolder_Setup(__FUNCTION__);
+@@ -2449,6 +2558,9 @@ const char *SDL_AndroidGetInternalStoragePath(void)
+ 
+ int SDL_AndroidGetExternalStorageState(void)
+ {
++    if (!mActivityClass) {
++        return 0; /* Tremu */
++    }
+     struct LocalReferenceHolder refs = LocalReferenceHolder_Setup(__FUNCTION__);
+     jmethodID mid;
+     jclass cls;
+@@ -2489,6 +2601,9 @@ int SDL_AndroidGetExternalStorageState(void)
+ const char *SDL_AndroidGetExternalStoragePath(void)
+ {
+     static char *s_AndroidExternalFilesPath = NULL;
++    if (!mActivityClass) {
++        return SDL_getenv("TREMU_XEMU_BASE"); /* Tremu */
++    }
+ 
+     if (!s_AndroidExternalFilesPath) {
+         struct LocalReferenceHolder refs = LocalReferenceHolder_Setup(__FUNCTION__);
+@@ -2544,7 +2659,7 @@ int SDL_AndroidShowToast(const char *message, int duration, int gravity, int xOf
+ void Android_JNI_GetManifestEnvironmentVariables(void)
+ {
+     if (!mActivityClass || !midGetManifestEnvironmentVariables) {
+-        __android_log_print(ANDROID_LOG_WARN, "SDL", "Request to get environment variables before JNI is ready");
++        /* Tremu: normal here, no Java side */
+         return;
+     }
+ 
+@@ -2559,6 +2674,9 @@ void Android_JNI_GetManifestEnvironmentVariables(void)
+ 
+ int Android_JNI_CreateCustomCursor(SDL_Surface *surface, int hot_x, int hot_y)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     int custom_cursor = 0;
+     jintArray pixels;
+@@ -2575,36 +2693,54 @@ int Android_JNI_CreateCustomCursor(SDL_Surface *surface, int hot_x, int hot_y)
+ 
+ void Android_JNI_DestroyCustomCursor(int cursorID)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     (*env)->CallStaticVoidMethod(env, mActivityClass, midDestroyCustomCursor, cursorID);
+ }
+ 
+ SDL_bool Android_JNI_SetCustomCursor(int cursorID)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midSetCustomCursor, cursorID);
+ }
+ 
+ SDL_bool Android_JNI_SetSystemCursor(int cursorID)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midSetSystemCursor, cursorID);
+ }
+ 
+ SDL_bool Android_JNI_SupportsRelativeMouse(void)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midSupportsRelativeMouse);
+ }
+ 
+ SDL_bool Android_JNI_SetRelativeMouseEnabled(SDL_bool enabled)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midSetRelativeMouseEnabled, (enabled == 1));
+ }
+ 
+ SDL_bool Android_JNI_RequestPermission(const char *permission)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     jstring jpermission;
+     const int requestCode = 1;
+@@ -2629,6 +2765,9 @@ SDL_bool Android_JNI_RequestPermission(const char *permission)
+ /* Show toast notification */
+ int Android_JNI_ShowToast(const char *message, int duration, int gravity, int xOffset, int yOffset)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     int result = 0;
+     JNIEnv *env = Android_JNI_GetEnv();
+     jstring jmessage = (*env)->NewStringUTF(env, message);
+@@ -2697,6 +2836,9 @@ int Android_JNI_GetLocale(char *buf, size_t buflen)
+ 
+ int Android_JNI_OpenURL(const char *url)
+ {
++    if (!mActivityClass) { /* Tremu: no Java side */
++        return 0;
++    }
+     JNIEnv *env = Android_JNI_GetEnv();
+     jstring jurl = (*env)->NewStringUTF(env, url);
+     const int ret = (*env)->CallStaticIntMethod(env, mActivityClass, midOpenURL, jurl);
+diff --git a/thirdparty/SDL2/src/hidapi/android/hid.cpp b/thirdparty/SDL2/src/hidapi/android/hid.cpp
+index 3b050a6..ba0196a 100644
+--- a/thirdparty/SDL2/src/hidapi/android/hid.cpp
++++ b/thirdparty/SDL2/src/hidapi/android/hid.cpp
+@@ -1049,6 +1049,7 @@ extern "C"
+ 
+ int hid_init(void)
+ {
++	if ( !g_JVM ) return -1; // Tremu: no Java side
+ 	if ( !g_initialized )
+ 	{
+ 		// HIDAPI doesn't work well with Android < 4.3
+diff --git a/thirdparty/SDL2/src/video/SDL_egl.c b/thirdparty/SDL2/src/video/SDL_egl.c
+index 50f7082..50e418f 100644
+--- a/thirdparty/SDL2/src/video/SDL_egl.c
++++ b/thirdparty/SDL2/src/video/SDL_egl.c
+@@ -577,6 +577,17 @@ int SDL_EGL_InitializeOffscreen(_THIS, int device)
+         return SDL_SetError("SDL_EGL_LoadLibraryOnly() has not been called or has failed.");
+     }
+ 
++#ifdef __ANDROID__
++    /* Tremu: no EXT_device_enumeration on Adreno, the default display does the job */
++    _this->egl_data->egl_display = _this->egl_data->eglGetDisplay(EGL_DEFAULT_DISPLAY);
++    if (_this->egl_data->eglInitialize(_this->egl_data->egl_display, NULL, NULL) != EGL_TRUE) {
++        return SDL_SetError("Could not initialize EGL");
++    }
++    SDL_EGL_GetVersion(_this);
++    _this->gl_config.driver_loaded = 1;
++    _this->egl_data->eglBindAPI(_this->gl_config.profile_mask == SDL_GL_CONTEXT_PROFILE_ES ? EGL_OPENGL_ES_API : EGL_OPENGL_API);
++    return 0;
++#endif
+     /* Check for all extensions that are optional until used and fail if any is missing */
+     if (!_this->egl_data->eglQueryDevicesEXT) {
+         return SDL_SetError("eglQueryDevicesEXT is missing (EXT_device_enumeration not supported by the drivers?)");
+diff --git a/ui/xemu-input.c b/ui/xemu-input.c
+index e50e83a..edadc8b 100644
+--- a/ui/xemu-input.c
++++ b/ui/xemu-input.c
+@@ -586,10 +586,21 @@ void xemu_input_update_controllers(void)
+     }
+ }
+ 
++/* Tremu (tremu_xemu.cpp): the Touch controllers take the keyboard controller's place. */
++int tremu_pad_active;
++uint32_t tremu_pad_buttons;
++int16_t tremu_pad_axis[CONTROLLER_AXIS__COUNT];
++int tremu_gun_visible;
++
+ void xemu_input_update_sdl_kbd_controller_state(ControllerState *state)
+ {
+     state->buttons = 0;
+     memset(state->axis, 0, sizeof(state->axis));
++    if (tremu_pad_active) {
++        state->buttons = tremu_pad_buttons;
++        memcpy(state->axis, tremu_pad_axis, sizeof(state->axis));
++        return;
++    }
+ 
+     const uint8_t *kbd = SDL_GetKeyboardState(NULL);
+ 
+diff --git a/ui/xemu.c b/ui/xemu.c
+index 588a3ed..ccb94c4 100644
+--- a/ui/xemu.c
++++ b/ui/xemu.c
+@@ -1064,6 +1064,9 @@ static void sdl2_display_very_early_init(DisplayOptions *o)
+     SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+ #else
+     bool use_vulkan = (g_config.display.renderer == CONFIG_DISPLAY_RENDERER_VULKAN);
++    if (getenv("TREMU_XEMU_BASE")) {
++        use_vulkan = false; /* Tremu: the offscreen window only needs its GL context for presentation */
++    }
+     SDL_WindowFlags window_flags = (SDL_WindowFlags)(
+         (use_vulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL) | 
+         SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+@@ -1608,6 +1611,9 @@ static void update_fps(void)
+     fps = 1000.0/avg;
+ }
+ 
++/* Tremu (tremu_xemu.cpp): called with each finished frame still in the window's framebuffer. */
++void (*tremu_frame_hook)(int w, int h);
++
+ void sdl2_gl_refresh(DisplayChangeListener *dcl)
+ {
+     struct sdl2_console *scon = container_of(dcl, struct sdl2_console, dcl);
+@@ -1783,6 +1789,11 @@ void sdl2_gl_refresh(DisplayChangeListener *dcl)
+ #ifdef __ANDROID__
+     android_log_gl_error("refresh-finish");
+ #endif
++    if (tremu_frame_hook) {
++        int tremu_w = 0, tremu_h = 0;
++        SDL_GL_GetDrawableSize(scon->real_window, &tremu_w, &tremu_h);
++        tremu_frame_hook(tremu_w, tremu_h);
++    }
+     SDL_GL_SwapWindow(scon->real_window);
+ #ifdef __ANDROID__
+     android_log_gl_error("refresh-swap");
+diff --git a/android/app/src/main/cpp/tremu_xemu.cpp b/android/app/src/main/cpp/tremu_xemu.cpp
+new file mode 100644
+--- /dev/null
++++ b/android/app/src/main/cpp/tremu_xemu.cpp
+@@ -0,0 +1,281 @@
++// Tremu: xemu (original Xbox, from X1 BOX) as a libretro-shaped core, so Tremu drives it like its
++// other emulators (virtual screen in VR, Touch controllers as the Xbox pad, carousel and menu).
++//
++// - No SDLActivity here: SDL uses its offscreen video driver (EGL pbuffer), and its Android layer
++//   skips everything that needs its Java classes (see the Tremu notes in SDL_android.c).
++// - Video: ui/xemu.c calls tremu_frame_hook before each swap; the frame is read back and handed to the
++//   frontend as XRGB8888.
++// - Input: RetroPad port 0 feeds the keyboard controller (ui/xemu-input.c), bound to Xbox port 1.
++// - Audio: SDL's AAudio output (nothing goes through the frontend).
++// - Like Xenia here, one game per process: Tremu restarts itself when leaving the game.
++
++#include <GLES3/gl31.h>
++#include <android/log.h>
++#include <dirent.h>
++#include <dlfcn.h>
++#include <jni.h>
++#include <pthread.h>
++#include <sys/stat.h>
++
++#include <atomic>
++#include <cstdlib>
++#include <cstring>
++#include <mutex>
++#include <string>
++#include <vector>
++
++#include "libretro.h"
++
++#define LOG(...) __android_log_print(ANDROID_LOG_INFO, "Tremu-xemu", __VA_ARGS__)
++
++extern "C" {
++// ui/xemu.c and ui/xemu-input.c
++extern void (*tremu_frame_hook)(int w, int h);
++extern int tremu_pad_active;
++extern uint32_t tremu_pad_buttons;
++extern int16_t tremu_pad_axis[6];
++extern int tremu_gun_visible;
++// xemu_android.cpp
++void tremu_xemu_set_files(const char* base, const char* mcpx, const char* flash, const char* hdd, const char* dvd);
++int SDL_main(int argc, char* argv[]);
++void SDL_SetMainReady(void);
++}
++
++namespace {
++
++constexpr int kMaxW = 1920, kMaxH = 1080;
++
++retro_environment_t environ_cb;
++retro_video_refresh_t video_cb;
++retro_input_poll_t input_poll_cb;
++retro_input_state_t input_state_cb;
++
++std::string files_dir;
++bool booted;
++
++std::mutex frame_mutex;
++std::vector<uint32_t> frame, shown, row;
++int frame_w, frame_h;
++std::atomic<bool> frame_new;
++
++void on_frame(int w, int h) {
++  if (w <= 0 || h <= 0 || w > kMaxW || h > kMaxH) return;
++  std::lock_guard<std::mutex> lock(frame_mutex);
++  frame.resize(size_t(w) * h);
++  glBindFramebuffer(GL_FRAMEBUFFER, 0);
++  glPixelStorei(GL_PACK_ALIGNMENT, 4);
++  glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, frame.data());
++  // GL starts at the bottom row, libretro at the top; RGBA bytes -> 0x00RRGGBB.
++  for (int y = 0; y < h / 2; y++) {
++    uint32_t* a = frame.data() + size_t(y) * w;
++    uint32_t* b = frame.data() + size_t(h - 1 - y) * w;
++    for (int x = 0; x < w; x++) std::swap(a[x], b[x]);
++  }
++  for (uint32_t& p : frame) p = ((p & 0xFF) << 16) | (p & 0xFF00) | ((p >> 16) & 0xFF);
++  frame_w = w;
++  frame_h = h;
++  frame_new = true;
++}
++
++void* xemu_thread(void*) {
++  SDL_SetMainReady();  // SDLActivity would have done this path
++  char name[] = "xemu";
++  char* argv[] = {name, nullptr};
++  int rc = SDL_main(1, argv);
++  LOG("xemu returned %d", rc);
++  return nullptr;
++}
++
++bool has_suffix(const std::string& s, const char* suffix) {
++  size_t n = strlen(suffix);
++  return s.size() >= n && !strcasecmp(s.c_str() + s.size() - n, suffix);
++}
++
++// The player's own console files: the 512-byte MCPX boot ROM, a BIOS image, the hard disk image.
++void find_console_files(const std::string& folder, std::string* mcpx, std::string* flash, std::string* hdd) {
++  DIR* d = opendir(folder.c_str());
++  if (!d) return;
++  for (dirent* e; (e = readdir(d));) {
++    std::string path = folder + "/" + e->d_name;
++    struct stat st;
++    if (stat(path.c_str(), &st) || !S_ISREG(st.st_mode)) continue;
++    if (has_suffix(path, ".qcow2")) {
++      if (hdd->empty()) *hdd = path;
++    } else if (has_suffix(path, ".bin") && st.st_size == 512) {
++      if (mcpx->empty()) *mcpx = path;
++    } else if (has_suffix(path, ".bin") && st.st_size >= 256 * 1024) {
++      if (flash->empty()) *flash = path;
++    }
++  }
++  closedir(d);
++}
++
++// RetroPad -> Xbox pad bits (controller_state_buttons_mask in ui/xemu-input.h).
++const struct { int retro; uint32_t mask; } kButtons[] = {
++    {RETRO_DEVICE_ID_JOYPAD_B, 1 << 0},      {RETRO_DEVICE_ID_JOYPAD_A, 1 << 1},
++    {RETRO_DEVICE_ID_JOYPAD_Y, 1 << 2},      {RETRO_DEVICE_ID_JOYPAD_X, 1 << 3},
++    {RETRO_DEVICE_ID_JOYPAD_LEFT, 1 << 4},   {RETRO_DEVICE_ID_JOYPAD_UP, 1 << 5},
++    {RETRO_DEVICE_ID_JOYPAD_RIGHT, 1 << 6},  {RETRO_DEVICE_ID_JOYPAD_DOWN, 1 << 7},
++    {RETRO_DEVICE_ID_JOYPAD_SELECT, 1 << 8}, {RETRO_DEVICE_ID_JOYPAD_START, 1 << 9},
++    {RETRO_DEVICE_ID_JOYPAD_L, 1 << 10},     {RETRO_DEVICE_ID_JOYPAD_R, 1 << 11},
++    {RETRO_DEVICE_ID_JOYPAD_L3, 1 << 12},    {RETRO_DEVICE_ID_JOYPAD_R3, 1 << 13},
++};
++
++int16_t clamp16(int v) { return int16_t(v < -32768 ? -32768 : v > 32767 ? 32767 : v); }
++
++void read_input() {
++  input_poll_cb();
++  uint32_t buttons = 0;
++  for (const auto& b : kButtons)
++    if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, b.retro)) buttons |= b.mask;
++  auto axis = [](unsigned index, unsigned id) {
++    return int(input_state_cb(0, RETRO_DEVICE_ANALOG, index, id));
++  };
++  tremu_pad_buttons = buttons;
++  tremu_pad_axis[0] = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2) ? 32767 : 0;
++  tremu_pad_axis[1] = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2) ? 32767 : 0;
++  // libretro y grows downwards, the Xbox pad's upwards.
++  tremu_pad_axis[2] = clamp16(axis(RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X));
++  tremu_pad_axis[3] = clamp16(-axis(RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y));
++  tremu_pad_axis[4] = clamp16(axis(RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X));
++  tremu_pad_axis[5] = clamp16(-axis(RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y));
++  if (getenv("TREMU_XBOX_GUN")) {
++    // Light gun: aim in the left stick (0,0 at centre and when off-screen, y up), trigger on A.
++    // The gun's thumb pad, for the menus, comes from the Touch stick.
++    constexpr int kThumb = 16000;
++    int lx = tremu_pad_axis[2], ly = tremu_pad_axis[3];
++    if (lx < -kThumb) tremu_pad_buttons |= 1 << 4;
++    if (lx > kThumb) tremu_pad_buttons |= 1 << 6;
++    if (ly > kThumb) tremu_pad_buttons |= 1 << 5;
++    if (ly < -kThumb) tremu_pad_buttons |= 1 << 7;
++    bool off = input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN);
++    tremu_gun_visible = !off;
++    tremu_pad_axis[2] = off ? 0 : clamp16(input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X));
++    tremu_pad_axis[3] = off ? 0 : clamp16(-input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y));
++    if (input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_TRIGGER)) tremu_pad_buttons |= 1 << 0;
++    tremu_pad_axis[1] = 0;  // the Touch trigger is the gun's, not the pad's right trigger
++  }
++}
++
++}  // namespace
++
++// Tremu hands the Java VM and its activity before retro_init (dlopen'ed from native code: no
++// JNI_OnLoad). SDL needs the VM to attach its threads.
++extern "C" __attribute__((visibility("default"))) void tremu_set_android(JavaVM* vm, jobject activity) {
++  JNIEnv* env = nullptr;
++  bool attached = false;
++  if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
++    vm->AttachCurrentThread(&env, nullptr);
++    attached = true;
++  }
++  jobject dir = env->CallObjectMethod(activity, env->GetMethodID(env->GetObjectClass(activity), "getFilesDir",
++                                                                 "()Ljava/io/File;"));
++  jstring path = (jstring)env->CallObjectMethod(dir, env->GetMethodID(env->GetObjectClass(dir), "getAbsolutePath",
++                                                                      "()Ljava/lang/String;"));
++  const char* chars = env->GetStringUTFChars(path, nullptr);
++  files_dir = chars;
++  env->ReleaseStringUTFChars(path, chars);
++  if (attached) vm->DetachCurrentThread();
++  void* sdl = dlopen("libSDL2.so", RTLD_NOW);
++  auto on_load = sdl ? reinterpret_cast<jint (*)(JavaVM*, void*)>(dlsym(sdl, "JNI_OnLoad")) : nullptr;
++  if (on_load) on_load(vm, nullptr);
++  else LOG("SDL's JNI_OnLoad not found");
++  LOG("files %s", files_dir.c_str());
++}
++
++extern "C" {
++
++RETRO_API unsigned retro_api_version(void) { return RETRO_API_VERSION; }
++RETRO_API void retro_set_environment(retro_environment_t cb) { environ_cb = cb; }
++RETRO_API void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
++RETRO_API void retro_set_audio_sample(retro_audio_sample_t) {}
++RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t) {}
++RETRO_API void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
++RETRO_API void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
++RETRO_API void retro_init(void) {}
++RETRO_API void retro_deinit(void) {}
++
++RETRO_API void retro_get_system_info(retro_system_info* info) {
++  memset(info, 0, sizeof *info);
++  info->library_name = "xemu (X1 BOX, Tremu)";
++  info->library_version = "tremu";
++  info->valid_extensions = "iso";
++  info->need_fullpath = true;
++}
++
++RETRO_API void retro_get_system_av_info(retro_system_av_info* info) {
++  memset(info, 0, sizeof *info);
++  info->geometry = {640, 480, kMaxW, kMaxH, 4.0f / 3.0f};
++  info->timing = {60.0, 48000.0};
++}
++
++RETRO_API void retro_set_controller_port_device(unsigned, unsigned) {}
++RETRO_API void retro_reset(void) {}
++
++RETRO_API bool retro_load_game(const retro_game_info* game) {
++  if (!game || !game->path) return false;
++  if (booted) { LOG("xemu already ran a game in this process"); return false; }
++  enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
++  environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
++
++  const char* system_dir = nullptr;
++  environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir);
++  std::string root = system_dir ? system_dir : "/storage/emulated/0/Tremu/bios";
++  std::string mcpx, flash, hdd;
++  find_console_files(root + "/xbox", &mcpx, &flash, &hdd);
++  find_console_files(root + "/../Xbox/system", &mcpx, &flash, &hdd);
++  if (mcpx.empty() || flash.empty() || hdd.empty()) {
++    LOG("console files missing: mcpx '%s' bios '%s' disk '%s'", mcpx.c_str(), flash.c_str(), hdd.c_str());
++    return false;
++  }
++  if (files_dir.empty() && getenv("TREMU_FILES_DIR")) files_dir = getenv("TREMU_FILES_DIR");  // test harness
++  std::string base = files_dir + "/xemu";
++  mkdir(base.c_str(), 0700);
++  setenv("SDL_VIDEODRIVER", "offscreen", 1);
++  setenv("SDL_JOYSTICK_HIDAPI", "0", 1);
++  setenv("TREMU_XEMU_BASE", base.c_str(), 1);
++  setenv("XEMU_RENDERER", getenv("TREMU_RENDERER") ? getenv("TREMU_RENDERER") : "vulkan", 1);
++  LOG("boot %s, mcpx %s, bios %s, disk %s", game->path, mcpx.c_str(), flash.c_str(), hdd.c_str());
++  tremu_xemu_set_files(base.c_str(), mcpx.c_str(), flash.c_str(), hdd.c_str(), game->path);
++  tremu_frame_hook = on_frame;
++  tremu_pad_active = 1;
++  pthread_t thread;
++  pthread_attr_t attr;
++  pthread_attr_init(&attr);
++  pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
++  if (pthread_create(&thread, &attr, xemu_thread, nullptr)) return false;
++  booted = true;
++  return true;
++}
++
++RETRO_API bool retro_load_game_special(unsigned, const retro_game_info*, size_t) { return false; }
++
++// The process is about to end: nothing to stop cleanly.
++RETRO_API void retro_unload_game(void) {}
++
++RETRO_API void retro_run(void) {
++  read_input();
++  if (frame_new.exchange(false)) {
++    int w, h;
++    {
++      std::lock_guard<std::mutex> lock(frame_mutex);
++      shown.swap(frame);
++      w = frame_w;
++      h = frame_h;
++    }
++    video_cb(shown.data(), w, h, size_t(w) * 4);
++  } else {
++    video_cb(nullptr, 0, 0, 0);
++  }
++}
++
++RETRO_API unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
++RETRO_API size_t retro_serialize_size(void) { return 0; }
++RETRO_API bool retro_serialize(void*, size_t) { return false; }
++RETRO_API bool retro_unserialize(const void*, size_t) { return false; }
++RETRO_API void retro_cheat_reset(void) {}
++RETRO_API void retro_cheat_set(unsigned, bool, const char*) {}
++RETRO_API void* retro_get_memory_data(unsigned) { return nullptr; }
++RETRO_API size_t retro_get_memory_size(unsigned) { return 0; }
++
++}  // extern "C"

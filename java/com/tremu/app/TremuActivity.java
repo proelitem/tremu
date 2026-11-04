@@ -15,23 +15,23 @@ import android.os.Bundle;
  * NativeActivity host for Tremu. Adds what the native side cannot do alone:
  * Bluetooth access to the WonderFitter gun and text rendering for the options menu.
  */
-public final class WfgActivity extends NativeActivity {
+public final class TremuActivity extends NativeActivity {
     static {
         // NativeActivity loads the library without registering it with this class loader;
         // loading it here lets WonderFitterGun's native methods resolve.
-        System.loadLibrary("wfgemu");
+        System.loadLibrary("tremu");
     }
 
     private static final String[] GUN_PERMISSIONS = {
         "android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT"};
 
-    private static WfgActivity instance;
+    private static TremuActivity instance;
 
     @Override protected void onCreate(Bundle state) {
-        moveSharedFolder();  // before the native side starts and creates the folder
+        moveEarlierFiles();  // before the native side starts and creates the folder
         super.onCreate(state);
         instance = this;
-        intentGame = getIntent().getStringExtra("wfg_game");
+        intentGame = getIntent().getStringExtra("tremu_game");
         if (!gunPermitted()) requestPermissions(GUN_PERMISSIONS, 0x5746);
         askForFiles();
     }
@@ -59,12 +59,22 @@ public final class WfgActivity extends NativeActivity {
         android.os.Process.killProcess(android.os.Process.myPid());
     }
 
-    /** The shared folder used to be WFGEmu/: on the same storage, a rename moves everything at once. */
-    private static void moveSharedFolder() {
+    /**
+     * Moves what an earlier version (named WFGEmu) left: the shared folder, which on the same storage a
+     * rename moves at once, and the settings file in the app's private files.
+     */
+    private void moveEarlierFiles() {
         java.io.File old = new java.io.File("/storage/emulated/0/WFGEmu");
         java.io.File now = new java.io.File("/storage/emulated/0/Tremu");
-        if (!old.isDirectory() || now.exists()) return;
-        android.util.Log.i("Tremu", "shared folder renamed to Tremu: " + old.renameTo(now));
+        if (old.isDirectory() && !now.exists())
+            android.util.Log.i("Tremu", "shared folder renamed to Tremu: " + old.renameTo(now));
+        java.io.File oldCfg = new java.io.File(getFilesDir(), "wfgemu.cfg");
+        java.io.File newCfg = new java.io.File(getFilesDir(), "tremu.cfg");
+        if (oldCfg.isFile() && !newCfg.exists())
+            android.util.Log.i("Tremu", "settings file renamed to tremu.cfg: " + oldCfg.renameTo(newCfg));
+        java.io.File oldDriver = new java.io.File(getFilesDir(), "drivers/WFG-Turnip");
+        java.io.File newDriver = new java.io.File(getFilesDir(), "drivers/Tremu-Turnip");
+        if (oldDriver.isDirectory() && !newDriver.exists()) oldDriver.renameTo(newDriver);
     }
 
     /** Before quitting: RestartActivity opens the app again once this process has ended. */
@@ -76,7 +86,7 @@ public final class WfgActivity extends NativeActivity {
 
     private static String intentGame;
 
-    /** Game to start right after the splash, from "am start ... --es wfg_game <path>" (tests without
+    /** Game to start right after the splash, from "am start ... --es tremu_game <path>" (tests without
      *  the headset on); returned once. */
     public static String takeIntentGame() {
         String game = intentGame;
@@ -118,7 +128,7 @@ public final class WfgActivity extends NativeActivity {
      */
     public static boolean unpackAsset(String asset, String dir) {
         java.io.File sys = new java.io.File(dir);
-        java.io.File stamp = new java.io.File(sys, ".wfgemu-version");
+        java.io.File stamp = new java.io.File(sys, ".tremu-version");
         String version = Long.toString(instance.getApplicationInfo().sourceDir.length() > 0
                 ? new java.io.File(instance.getApplicationInfo().sourceDir).lastModified() : 0);
         try {
@@ -229,7 +239,7 @@ public final class WfgActivity extends NativeActivity {
                 .setClassName("org.vita3k.emulator", "org.vita3k.emulator.WfgLaunchActivity")
                 .putExtra("wfg_path", path)
                 .putExtra("title_id", VitaLibrary.titleId(new java.io.File(path)))
-                .putExtra("wfg_pad", VitaLibrary.padMap(new java.io.File(instance.getFilesDir(), "wfgemu.cfg")))
+                .putExtra("wfg_pad", VitaLibrary.padMap(new java.io.File(instance.getFilesDir(), "tremu.cfg")))
                 .putExtra("wfg_return_package", instance.getPackageName())
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
         WonderFitterGun.stop();

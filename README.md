@@ -19,3 +19,7 @@ python build.py --install
 `build.py` attend, à côté de ce dossier, les outils `../time-crisis-vr/.tools` (NDK, OpenXR, outils Android) et `../_tools` (CMake, JDK), et les cœurs compilés dans `third_party/`. Ces cœurs ne sont pas dans le dépôt : ils viennent du buildbot libretro ou de nos versions, construites par `tools/build_*`. Voir [THIRD_PARTY.md](THIRD_PARTY.md).
 
 Le plan de travail est dans [ROADMAP.md](ROADMAP.md).
+
+## Licence et crédits
+
+Tremu est publié sous la GNU GPL v3 ou ultérieure ([LICENSE](LICENSE)). Il charge des émulateurs écrits par d'autres, chacun sous sa licence : les auteurs, les licences et nos modifications sont dans [THIRD_PARTY.md](THIRD_PARTY.md), les textes de licence dans [licenses/](licenses/), et nos modifications des émulateurs dans [patches/](patches/). Trois émulateurs de l'APK (FBNeo, Snes9x, Genesis Plus GX) interdisent un usage commercial : voir les contraintes avant de distribuer un APK.

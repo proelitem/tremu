@@ -54,11 +54,11 @@ static bool gamepad;  /* this game is played with the Touch gamepad, no gun plug
  * for, so an unused gun blocks it. An idle gun (no trigger, no reload) aimed off screen is
  * reported where it last aimed (the centre at first), like a gun resting towards the screen. */
 static bool guncon2;
-static int16_t rest_x[WG_PLAYERS], rest_y[WG_PLAYERS];
+static int16_t rest_x[TREMU_PLAYERS], rest_y[TREMU_PLAYERS];
 /* A real GunCon sees nothing while the screen is black: Time Crisis flashes one black frame after
  * each calibration shot and waits for that "no light" report. Set after each frame. */
 static bool frame_dark;
-void wg_core_set_gamepad(bool on) { gamepad = on; }
+void tremu_core_set_gamepad(bool on) { gamepad = on; }
 /* Dolphin: the gun is a Wiimote, aimed through the pointer device, trigger on B. */
 static bool wiimote;
 static Core cores[MAX_CORES];
@@ -74,7 +74,7 @@ static uint8_t *layer_frame;
 static unsigned layer_cap;
 static bool layers_valid;
 /* Players' guns (1 to 4) for the frame being emulated. */
-static const WgGun *current_guns;
+static const TremuGun *current_guns;
 /* Player whose gun each port reads. Cores with a gun on the first port (arcade, PS1, Dreamcast...)
  * map port n to player n+1; otherwise the first port read as a lightgun is player 1 (the NES
  * Zapper and the Super Scope sit in the console's second port). */
@@ -103,12 +103,12 @@ static pthread_mutex_t options_lock = PTHREAD_MUTEX_INITIALIZER;
 static atomic_bool options_updated, crosshair_on = true;
 static atomic_int vulkan_driver;
 
-const char *wg_core_driver_name(int driver) {
-    static const char *const names[WG_DRIVER_COUNT] = {"WFG-Turnip", "Adreno"};
-    return names[driver >= 0 && driver < WG_DRIVER_COUNT ? driver : 0];
+const char *tremu_core_driver_name(int driver) {
+    static const char *const names[TREMU_DRIVER_COUNT] = {"Tremu-Turnip", "Adreno"};
+    return names[driver >= 0 && driver < TREMU_DRIVER_COUNT ? driver : 0];
 }
 
-void wg_core_set_vulkan_driver(int driver) { atomic_store(&vulkan_driver, driver); }
+void tremu_core_set_vulkan_driver(int driver) { atomic_store(&vulkan_driver, driver); }
 
 static atomic_int internal_res;
 static atomic_int stereo_percent;
@@ -176,7 +176,7 @@ static const char *pick_value(const char *key, const char *values) {
     else if (strstr(key, "rearmed_crosshair") || (strstr(key, "_lightgun") && strstr(key, "_crosshair") && !strstr(key, "size")))
         want = atomic_load(&crosshair_on) ? "white" : "disabled";
     else if (strstr(key, "snes9x_") && strstr(key, "_crosshair") && !atomic_load(&crosshair_on)) want = "0";
-    else if (strstr(key, "xenia_vulkan_driver")) want = wg_core_driver_name(atomic_load(&vulkan_driver));
+    else if (strstr(key, "xenia_vulkan_driver")) want = tremu_core_driver_name(atomic_load(&vulkan_driver));
     else if (strstr(key, "virtuagun_crosshair")) want = atomic_load(&crosshair_on) ? "Cross" : "Off";  /* Saturn */
     else if (strstr(key, "gun_cursor")) want = atomic_load(&crosshair_on) ? "enabled" : "disabled";  /* Mega Drive, Mega-CD */
     else if (internal_res_value(key)) want = internal_res_value(key);
@@ -218,7 +218,7 @@ static void set_variables(const struct retro_variable *vars) {
     pthread_mutex_unlock(&options_lock);
 }
 
-void wg_core_set_adhoc(const char *server_ip, bool builtin_server, bool relay, const char *mac) {
+void tremu_core_set_adhoc(const char *server_ip, bool builtin_server, bool relay, const char *mac) {
     unsigned a = 0, b = 0, c = 0, d = 0;
     sscanf(server_ip, "%u.%u.%u.%u", &a, &b, &c, &d);
     pthread_mutex_lock(&options_lock);
@@ -235,7 +235,7 @@ void wg_core_set_adhoc(const char *server_ip, bool builtin_server, bool relay, c
     atomic_store(&options_updated, true);
 }
 
-void wg_core_set_internal_res(int multiple) {
+void tremu_core_set_internal_res(int multiple) {
     atomic_store(&internal_res, multiple);
     /* Cores stay loaded and declare their options once: choose again among those already declared. */
     pthread_mutex_lock(&options_lock);
@@ -251,7 +251,7 @@ void wg_core_set_internal_res(int multiple) {
     pthread_mutex_unlock(&options_lock);
 }
 
-void wg_core_set_stereo(int percent) {
+void tremu_core_set_stereo(int percent) {
     if (atomic_exchange(&stereo_percent, percent) == percent) return;
     pthread_mutex_lock(&options_lock);
     for (int i = 0; i < option_count; i++) {
@@ -272,7 +272,7 @@ static const char *get_variable(const char *key) {
     return found;
 }
 
-void wg_core_set_crosshair(bool on) {
+void tremu_core_set_crosshair(bool on) {
     atomic_store(&crosshair_on, on);
     pthread_mutex_lock(&options_lock);
     for (int i = 0; i < option_count; i++)
@@ -569,7 +569,7 @@ static void audio_sample(int16_t left, int16_t right) {
 static void input_poll(void) {}
 
 /* Keys for the arcade's service menu (MAME reads its test and volume switches from the keyboard). */
-void wg_core_set_key(unsigned key, bool down) {
+void tremu_core_set_key(unsigned key, bool down) {
     if (keyboard_cb) keyboard_cb(down, key, 0, 0);
 }
 
@@ -583,7 +583,7 @@ static int16_t input_state(unsigned port, unsigned device, unsigned index, unsig
     }
     if (port >= MAX_PORTS || !current_guns) return 0;
     if (wiimote && !gamepad) {  /* Wii (a GameCube game is a pad game) */
-        const WgGun *g = &current_guns[port];
+        const TremuGun *g = &current_guns[port];
         if (base == RETRO_DEVICE_POINTER && index == 0) {
             switch (id) {
             case RETRO_DEVICE_ID_POINTER_X: return g->offscreen ? -0x8000 : g->x;
@@ -599,12 +599,12 @@ static int16_t input_state(unsigned port, unsigned device, unsigned index, unsig
     }
     if (base == RETRO_DEVICE_LIGHTGUN) {
         if (gun_player[port] < 0) {
-            if (gun_players == WG_PLAYERS) return 0;
+            if (gun_players == TREMU_PLAYERS) return 0;
             gun_player[port] = gun_players++;
             LOG("port %u lightgun = player %d", port, gun_player[port] + 1);
         }
         int player = gun_player[port];
-        const WgGun *g = &current_guns[player];
+        const TremuGun *g = &current_guns[player];
         bool resting = guncon2 && g->offscreen && !g->trigger && !g->reload && !frame_dark;
         if (guncon2 && !g->offscreen) { rest_x[player] = g->x; rest_y[player] = g->y; }
         switch (id) {
@@ -621,7 +621,7 @@ static int16_t input_state(unsigned port, unsigned device, unsigned index, unsig
         }
         return 0;
     }
-    const WgGun *g = &current_guns[port];
+    const TremuGun *g = &current_guns[port];
     if (base == RETRO_DEVICE_JOYPAD) {
         /* The Touch gamepad; coin and start are often read from the RetroPad even in lightgun
          * mode (and the NES Zapper games read them from the pad in the first port). */
@@ -668,15 +668,15 @@ static void *android_vm, *android_activity;
 static bool (*core_text_pending)(char *, size_t, char *, size_t, unsigned *);
 static void (*core_text_submit)(const char *);
 
-bool wg_core_text_pending(char *title, size_t title_size, char *text, size_t text_size, unsigned *max_length) {
+bool tremu_core_text_pending(char *title, size_t title_size, char *text, size_t text_size, unsigned *max_length) {
     return core_text_pending && core_text_pending(title, title_size, text, text_size, max_length);
 }
 
-void wg_core_text_submit(const char *text) {
+void tremu_core_text_submit(const char *text) {
     if (core_text_submit) core_text_submit(text);
 }
 
-void wg_core_set_android(void *vm, void *activity) {
+void tremu_core_set_android(void *vm, void *activity) {
     android_vm = vm;
     android_activity = activity;
 }
@@ -699,17 +699,17 @@ static bool open_core(Core *c, const char *path) {
     *(void **)&c->unserialize = dlsym(c->lib, "retro_unserialize");
     *(void **)&c->memory_data = dlsym(c->lib, "retro_get_memory_data");
     *(void **)&c->memory_size = dlsym(c->lib, "retro_get_memory_size");
-    *(void **)&c->nes_layers = dlsym(c->lib, "wfg_nes_layers");
-    *(void **)&c->layers = dlsym(c->lib, "wfg_layers");
+    *(void **)&c->nes_layers = dlsym(c->lib, "tremu_nes_layers");
+    *(void **)&c->layers = dlsym(c->lib, "tremu_layers");
     /* Our XenDroid build is dlopen'ed from native code: no JNI_OnLoad, so it gets the VM here. */
     /* Our N64 build takes the stereo strength directly. */
-    *(void **)&c->set_stereo = dlsym(c->lib, "retro_wfg_set_stereo");
+    *(void **)&c->set_stereo = dlsym(c->lib, "retro_tremu_set_stereo");
     void (*set_android)(void *, void *);
-    *(void **)&set_android = dlsym(c->lib, "wfg_set_android");
+    *(void **)&set_android = dlsym(c->lib, "tremu_set_android");
     if (set_android && android_vm) set_android(android_vm, android_activity);
-    if (dlsym(c->lib, "wfg_text_pending")) {
-        *(void **)&core_text_pending = dlsym(c->lib, "wfg_text_pending");
-        *(void **)&core_text_submit = dlsym(c->lib, "wfg_text_submit");
+    if (dlsym(c->lib, "tremu_text_pending")) {
+        *(void **)&core_text_pending = dlsym(c->lib, "tremu_text_pending");
+        *(void **)&core_text_submit = dlsym(c->lib, "tremu_text_submit");
     }
     snprintf(c->name, sizeof c->name, "%s", path);
     cur = c;  /* the environment callback fills this core's controller info */
@@ -757,10 +757,10 @@ static void *read_file(const char *path, size_t *size) {
     return data;
 }
 
-bool wg_core_load(const char *core, const char *system_dir, const char *save_dir, const char *rom) {
+bool tremu_core_load(const char *core, const char *system_dir, const char *save_dir, const char *rom) {
     snprintf(system_path, sizeof system_path, "%s", system_dir);
     snprintf(save_path, sizeof save_path, "%s", save_dir);
-    wg_core_close_game();
+    tremu_core_close_game();
     Core *c = find_core(core);
     if (!c) return false;
     cur = c;
@@ -792,9 +792,9 @@ bool wg_core_load(const char *core, const char *system_dir, const char *save_dir
     wiimote = strstr(core, "dolphin") != NULL;
     guncon = false;
     /* PS2: a GunCon 2 on each of the two USB ports (players 1 and 2). */
-    unsigned gun_ports = gamepad ? 0 : strstr(core, "pcsx2") ? 2 : WG_PLAYERS;
+    unsigned gun_ports = gamepad ? 0 : strstr(core, "pcsx2") ? 2 : TREMU_PLAYERS;
     /* A pad game: gamepads everywhere, also unplugging the gun a previous game left there. */
-    for (unsigned p = 0; gamepad && c->set_port_device && p < WG_PLAYERS; p++) c->set_port_device(p, RETRO_DEVICE_JOYPAD);
+    for (unsigned p = 0; gamepad && c->set_port_device && p < TREMU_PLAYERS; p++) c->set_port_device(p, RETRO_DEVICE_JOYPAD);
     /* Mega Drive: the Menacer (or Konami's Justifier) in the second port, the pad stays in the first. */
     bool mega_drive = strstr(core, "genesis") != NULL;
     for (unsigned p = 0; c->set_port_device && p < gun_ports; p++) {
@@ -803,14 +803,14 @@ bool wg_core_load(const char *core, const char *system_dir, const char *save_dir
         LOG("port %u set to device %u", p, device);
         /* FBNeo maps the gun only when a port's device changes, and it keeps the device from game to
          * game: without this, a second gun game in the same process never reads the gun. */
-        if (strstr(core, "wfgemu_core")) c->set_port_device(p, RETRO_DEVICE_JOYPAD);
+        if (strstr(core, "tremu_core")) c->set_port_device(p, RETRO_DEVICE_JOYPAD);
         c->set_port_device(p, device);
         guncon = guncon || (device != c->justifier_device[p] && strstr(core, "pcsx.so"));  /* PS1, not PS2 */
     }
     /* Dolphin binds its emulated Wiimotes only when told each port holds one ("WiiMote (upright)"
      * is RETRO_DEVICE_JOYPAD): without this the gun reaches nothing. */
     if (wiimote && c->set_port_device)
-        for (unsigned p = 0; p < WG_PLAYERS; p++) c->set_port_device(p, RETRO_DEVICE_JOYPAD);
+        for (unsigned p = 0; p < TREMU_PLAYERS; p++) c->set_port_device(p, RETRO_DEVICE_JOYPAD);
     /* NES: the Zapper goes in the second port (where Duck Hunt reads it), the pad stays in the
      * first for start and select. FCEUmm's own detection misses some dumps. */
     if (!c->gun_device[0] && c->zapper_device && c->set_port_device) {
@@ -821,7 +821,7 @@ bool wg_core_load(const char *core, const char *system_dir, const char *save_dir
      * port 1 (and 2) and stay "first port read = player 1", or player 1's gun would do nothing. */
     if (!gamepad && !mega_drive && (c->gun_device[0] || c->justifier_device[0])) {
         for (int p = 0; p < MAX_PORTS; p++) gun_player[p] = p;
-        gun_players = WG_PLAYERS;
+        gun_players = TREMU_PLAYERS;
     }
     guncon2 = !gamepad && strstr(core, "pcsx2") != NULL;
     frame_dark = false;
@@ -836,7 +836,7 @@ bool wg_core_load(const char *core, const char *system_dir, const char *save_dir
     c->get_av_info(&av);
     if (hw_requested && !hw_start()) {
         LOG("no OpenGL ES for %s", rom);
-        wg_core_close_game();
+        tremu_core_close_game();
         return false;
     }
     LOG("loaded %s with %s: %ux%u (max %ux%u) aspect %.3f, %.3f fps, %.0f Hz", rom, core, av.geometry.base_width,
@@ -846,7 +846,7 @@ bool wg_core_load(const char *core, const char *system_dir, const char *save_dir
     return true;
 }
 
-void wg_core_close_game(void) {
+void tremu_core_close_game(void) {
     if (audio) { AAudioStream_requestStop(audio); AAudioStream_close(audio); audio = NULL; }
     hw_stop();  /* before unloading, as RetroArch does */
     if (game_loaded) { cur->unload_game(); game_loaded = false; }
@@ -854,8 +854,8 @@ void wg_core_close_game(void) {
     rom_data = NULL;
 }
 
-void wg_core_unload(void) {
-    wg_core_close_game();
+void tremu_core_unload(void) {
+    tremu_core_close_game();
     for (int i = 0; i < MAX_CORES; i++) {
         if (cores[i].initialized) cores[i].deinit();
         if (cores[i].lib) dlclose(cores[i].lib);
@@ -864,11 +864,11 @@ void wg_core_unload(void) {
     cur = NULL;
 }
 
-size_t wg_core_state_size(void) { return cur && cur->serialize_size ? cur->serialize_size() : 0; }
-bool wg_core_save_state(void *data, size_t size) { return cur && cur->serialize && cur->serialize(data, size); }
-bool wg_core_load_state(const void *data, size_t size) { return cur && cur->unserialize && cur->unserialize(data, size); }
+size_t tremu_core_state_size(void) { return cur && cur->serialize_size ? cur->serialize_size() : 0; }
+bool tremu_core_save_state(void *data, size_t size) { return cur && cur->serialize && cur->serialize(data, size); }
+bool tremu_core_load_state(const void *data, size_t size) { return cur && cur->unserialize && cur->unserialize(data, size); }
 
-uint32_t wg_core_ram_crc(void) {
+uint32_t tremu_core_ram_crc(void) {
     const uint8_t *ram = cur && cur->memory_data ? cur->memory_data(RETRO_MEMORY_SYSTEM_RAM) : NULL;
     size_t size = cur && cur->memory_size ? cur->memory_size(RETRO_MEMORY_SYSTEM_RAM) : 0;
     uint32_t crc = 0xFFFFFFFFu;
@@ -879,7 +879,7 @@ uint32_t wg_core_ram_crc(void) {
     return ~crc;
 }
 
-void wg_core_run(const WgGun guns[WG_PLAYERS]) {
+void tremu_core_run(const TremuGun guns[TREMU_PLAYERS]) {
     current_guns = guns;
     if (hw_active) hw_make_current();
     if (cur && cur->set_stereo) cur->set_stereo(atomic_load(&stereo_percent));
@@ -921,7 +921,7 @@ void wg_core_run(const WgGun guns[WG_PLAYERS]) {
     layers_valid = true;
 }
 
-bool wg_core_views(unsigned *left_x, unsigned *right_x, unsigned *eye_w) {
+bool tremu_core_views(unsigned *left_x, unsigned *right_x, unsigned *eye_w) {
     if (!view_w || view_left_x + view_w > frame_w || view_right_x + view_w > frame_w) return false;
     *left_x = view_left_x;
     *right_x = view_right_x;
@@ -929,18 +929,18 @@ bool wg_core_views(unsigned *left_x, unsigned *right_x, unsigned *eye_w) {
     return true;
 }
 
-const uint32_t *wg_core_frame(unsigned *w, unsigned *h) {
+const uint32_t *tremu_core_frame(unsigned *w, unsigned *h) {
     *w = frame_w;
     *h = frame_h;
     return frame;
 }
 
-const uint8_t *wg_core_layers(void) { return layers_valid ? layer_frame : NULL; }
+const uint8_t *tremu_core_layers(void) { return layers_valid ? layer_frame : NULL; }
 
-double wg_core_fps(void) { return av.timing.fps > 1 ? av.timing.fps : 60; }
-float wg_core_aspect(void) {
+double tremu_core_fps(void) { return av.timing.fps > 1 ? av.timing.fps : 60; }
+float tremu_core_aspect(void) {
     if (av.geometry.aspect_ratio > 0) return av.geometry.aspect_ratio;
     return av.geometry.base_height ? (float)av.geometry.base_width / av.geometry.base_height : 4.f / 3.f;
 }
-unsigned wg_core_max_width(void) { return av.geometry.max_width; }
-unsigned wg_core_max_height(void) { return av.geometry.max_height; }
+unsigned tremu_core_max_width(void) { return av.geometry.max_width; }
+unsigned tremu_core_max_height(void) { return av.geometry.max_height; }

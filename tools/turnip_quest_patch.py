@@ -9,7 +9,7 @@ from pathlib import Path
 FILE = Path('src/freedreno/vulkan/tu_knl_kgsl.cc')
 s = FILE.read_text(encoding='utf-8')
 
-BEGIN, END = '/* WFG-QUEST-BEGIN */\n', '/* WFG-QUEST-END */\n'
+BEGIN, END = '/* TREMU-QUEST-BEGIN */\n', '/* TREMU-QUEST-END */\n'
 HELPERS = BEGIN + '''/* Horizon OS (Quest) refuses the GPUMEM_* memory ioctls with EACCES but allows GPUOBJ_*. */
 static int
 kgsl_get_info_compat(int fd, struct kgsl_gpumem_get_info *info)

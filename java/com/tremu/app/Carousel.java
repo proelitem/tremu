@@ -84,7 +84,7 @@ final class Carousel {
         p.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
         p.setColor(0xFFFFFFFF);
         p.setTextSize(54);
-        WfgActivity.fitText(p, title, right - left);
+        TremuActivity.fitText(p, title, right - left);
         c.drawText(title, left, height * 0.36f, p);
 
         // The wheel: a faint ring and a bright arc going round.
@@ -105,7 +105,7 @@ final class Carousel {
         p.setColor(0xFFD1D5DB);
         p.setTextSize(32);
         float textLeft = wx + radius + 50;
-        WfgActivity.fitText(p, status, right - textLeft);
+        TremuActivity.fitText(p, status, right - textLeft);
         c.drawText(status, textLeft, wy + 12, p);
 
         int[] pixels = new int[width * height];
@@ -119,7 +119,7 @@ final class Carousel {
         backdrop = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(backdrop);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        int[] pixels = WfgActivity.loadAsset("carousel_bg.jpg", width, height);
+        int[] pixels = TremuActivity.loadAsset("carousel_bg.jpg", width, height);
         if (pixels != null) {
             p.setShader(new BitmapShader(Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888),
                                          Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
@@ -129,7 +129,7 @@ final class Carousel {
         c.drawRoundRect(new RectF(0, 0, width, height), 36, 36, p);
         p.setShader(null);
         // The logo's metal plate covers the corner: SRC_ATOP keeps the page's rounded edge.
-        int[] logo = WfgActivity.loadAsset("carousel_logo.png", 340, 116);
+        int[] logo = TremuActivity.loadAsset("carousel_logo.png", 340, 116);
         if (logo != null) {
             p.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP));
             c.drawBitmap(Bitmap.createBitmap(logo, 340, 116, Bitmap.Config.ARGB_8888), 0, 0, p);
@@ -291,7 +291,7 @@ final class Carousel {
             p.setColor(0xFFFFFFFF);
             p.setTextSize(38);
             p.setLetterSpacing(.04f);
-            WfgActivity.fitText(p, title, 1000);
+            TremuActivity.fitText(p, title, 1000);
             c.drawText(title, cx, 532, p);
             p.setLetterSpacing(0);
             p.setTypeface(Typeface.DEFAULT);
@@ -332,7 +332,7 @@ final class Carousel {
         p.setTypeface(Typeface.DEFAULT);
         p.setTextSize(noGames ? 28 : 20);
         p.setColor(0xFFA8ACB4);
-        WfgActivity.fitText(p, footer, width - 96);
+        TremuActivity.fitText(p, footer, width - 96);
         c.drawText(footer, cx, noGames ? 340 : 676, p);
         p.setTextAlign(Paint.Align.LEFT);
 

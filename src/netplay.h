@@ -46,7 +46,7 @@ bool netplay_code(char out[12]);
 void netplay_dismiss_failure(void);
 /* One step per emulated frame. local is this headset's gun. Returns true with guns[0..3]
  * filled when a frame may run, false when it must wait (handshake, transfer or missing input). */
-bool netplay_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS]);
+bool netplay_frame(const TremuGun *local, TremuGun guns[NET_MAX_PLAYERS]);
 /* Call after each emulated frame (sync checks). */
 void netplay_after_frame(void);
 /* Call while the game is paused (menu, headset removed): keeps the network serviced

@@ -6,7 +6,7 @@ emulator-core/build.gradle). Windows long paths are off on this PC, so the sourc
 through a short junction (G:\\xs) and built in G:\\xb.
 
 Outputs, used by build.py:
-  third_party/xenia_wfg_libretro_android.so  (libe.so with wfg_libretro.cpp: libwfgemu_xenia.so)
+  third_party/xenia_tremu_libretro_android.so  (libe.so with tremu_libretro.cpp: libtremu_xenia.so)
   third_party/adrenotools/*.so               (libadrenotools hook libraries, next to it in lib/)
 Usage: python tools/build_xenia.py [--clean]
 """
@@ -51,7 +51,7 @@ def main():
             env=env)
     run(CMAKE, '--build', BUILD, '--parallel', '6', '--target', 'emu', *HOOKS, env=env)
     strip = NDK / 'toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe'
-    out = ROOT / 'third_party' / 'xenia_wfg_libretro_android.so'
+    out = ROOT / 'third_party' / 'xenia_tremu_libretro_android.so'
     run(strip, '--strip-debug', '-o', out, BUILD / 'libe.so')
     hooks = ROOT / 'third_party' / 'adrenotools'
     hooks.mkdir(exist_ok=True)

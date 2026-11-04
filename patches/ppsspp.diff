@@ -1,0 +1,36 @@
+diff --git a/libretro/libretro.cpp b/libretro/libretro.cpp
+index b6f3fa5..38f3ec4 100644
+--- a/libretro/libretro.cpp
++++ b/libretro/libretro.cpp
+@@ -962,6 +962,10 @@ static void check_variables(CoreParameter &coreParam)
+    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+       g_Config.iWlanAdhocChannel = atoi(var.value);
+ 
++   var.key = "ppsspp_adhoc_relay";
++   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++      g_Config.iAdhocServerRelayMode = (int)(strcmp(var.value, "enabled") ? AdhocServerRelayMode::AlwaysOff : AdhocServerRelayMode::AlwaysOn);
++
+    var.key = "ppsspp_enable_builtin_pro_ad_hoc_server";
+    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+    {
+diff --git a/libretro/libretro_core_options.h b/libretro/libretro_core_options.h
+index 59e190f..9c02aa9 100644
+--- a/libretro/libretro_core_options.h
++++ b/libretro/libretro_core_options.h
+@@ -962,6 +962,16 @@ struct retro_core_option_v2_definition option_defs_us[] = {
+       IP_ADDRESS_OPTIONS,
+       "0"
+    },
++   {
++      "ppsspp_adhoc_relay",
++      "Send Ad Hoc Traffic Through the Server's Relay",
++      NULL,
++      NULL,
++      NULL,
++      "network",
++      BOOL_OPTIONS,
++      "disabled"
++   },
+    {
+       "ppsspp_enable_upnp",
+       "Enable UPnP (Need a few seconds to detect)",

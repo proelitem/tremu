@@ -56,9 +56,9 @@ static uint64_t last_stun_ns;
  * frame (all guns) to every guest, which run it when it arrives. A slot holds frame f when its
  * tag is f + 1. */
 static uint32_t frame;
-static WgGun local_in[RING];
+static TremuGun local_in[RING];
 static uint32_t local_tag[RING];
-static WgGun all_in[RING][NET_MAX_PLAYERS];
+static TremuGun all_in[RING][NET_MAX_PLAYERS];
 static uint32_t all_tag[RING];
 static bool ready_unconfirmed;
 
@@ -69,7 +69,7 @@ typedef struct Guest {
     struct sockaddr_in addr;
     int delay;
     uint64_t last_recv_ns;
-    WgGun in[RING];
+    TremuGun in[RING];
     uint32_t tag[RING];
     uint32_t crc_frame, crc;
 } Guest;
@@ -122,14 +122,14 @@ static void send_peer(const uint8_t *buf, size_t len) {
 
 /* 11 bytes per player: gun x, y, flag bits, then the Touch gamepad buttons and sticks. */
 enum { GUN_BYTES = 11 };
-static void pack_gun(uint8_t *p, const WgGun *g) {
+static void pack_gun(uint8_t *p, const TremuGun *g) {
     p[0] = (uint8_t)g->x; p[1] = (uint8_t)((uint16_t)g->x >> 8);
     p[2] = (uint8_t)g->y; p[3] = (uint8_t)((uint16_t)g->y >> 8);
     p[4] = g->offscreen | g->trigger << 1 | g->reload << 2 | g->aux_a << 3 | g->aux_b << 4 | g->start << 5 | g->select << 6;
     p[5] = (uint8_t)g->pad; p[6] = (uint8_t)(g->pad >> 8);
     p[7] = (uint8_t)(g->lx >> 8); p[8] = (uint8_t)(g->ly >> 8); p[9] = (uint8_t)(g->rx >> 8); p[10] = (uint8_t)(g->ry >> 8);
 }
-static void unpack_gun(const uint8_t *p, WgGun *g) {
+static void unpack_gun(const uint8_t *p, TremuGun *g) {
     g->x = (int16_t)(p[0] | p[1] << 8);
     g->y = (int16_t)(p[2] | p[3] << 8);
     g->offscreen = p[4] & 1; g->trigger = p[4] >> 1 & 1; g->reload = p[4] >> 2 & 1; g->aux_a = p[4] >> 3 & 1;
@@ -138,7 +138,7 @@ static void unpack_gun(const uint8_t *p, WgGun *g) {
     g->lx = (int16_t)((int8_t)p[7] * 256); g->ly = (int16_t)((int8_t)p[8] * 256);
     g->rx = (int16_t)((int8_t)p[9] * 256); g->ry = (int16_t)((int8_t)p[10] * 256);
 }
-static const WgGun NEUTRAL = {.offscreen = true};
+static const TremuGun NEUTRAL = {.offscreen = true};
 
 /* Blocking part of Internet hosting, off the emulator thread: UPnP mapping and STUN DNS. */
 enum { ADHOC_SERVER_PORT = 27312, ADHOC_RELAY_PORT = 27313 };
@@ -229,7 +229,7 @@ static void free_transfer(void) {
 }
 
 /* The lockstep (re)starts at frame start: frames start .. start+d-1 of a gun are neutral. */
-static void fill_neutral(WgGun *ring, uint32_t *tag, uint32_t start, int d) {
+static void fill_neutral(TremuGun *ring, uint32_t *tag, uint32_t start, int d) {
     for (uint32_t f = start; f < start + (uint32_t)d; f++)
         if (tag[f % RING] != f + 1) {
             ring[f % RING] = NEUTRAL;
@@ -405,9 +405,9 @@ static void send_chunk(uint32_t i) {
  * party waits meanwhile (the host runs no frame until that guest is ready). */
 static bool start_sending(int slot) {
     free_transfer();
-    state_size = wg_core_state_size();
+    state_size = tremu_core_state_size();
     state_buf = state_size ? malloc(state_size) : NULL;
-    if (!state_buf || !wg_core_save_state(state_buf, state_size)) {
+    if (!state_buf || !tremu_core_save_state(state_buf, state_size)) {
         free_transfer();
         return false;
     }
@@ -739,7 +739,7 @@ static void drop_silent_guests(uint64_t now) {
         if (guests[s].used && now - guests[s].last_recv_ns > 10000 * MS) drop_guest(s, "silent");
 }
 
-static bool host_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS], uint64_t now) {
+static bool host_frame(const TremuGun *local, TremuGun guns[NET_MAX_PLAYERS], uint64_t now) {
     uint32_t ahead = frame + DELAY_DEFAULT;
     bool fresh = local_tag[ahead % RING] != ahead + 1;
     if (fresh) {
@@ -758,7 +758,7 @@ static bool host_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS], uint64_t
         if (silent) atomic_store(&state, NET_STALLED);
         return false;
     }
-    WgGun *row = all_in[frame % RING];
+    TremuGun *row = all_in[frame % RING];
     row[0] = local_tag[frame % RING] == frame + 1 ? local_in[frame % RING] : NEUTRAL;
     for (int s = 1; s < NET_MAX_PLAYERS; s++) row[s] = guests[s].playing ? guests[s].in[frame % RING] : NEUTRAL;
     all_tag[frame % RING] = frame + 1;
@@ -769,7 +769,7 @@ static bool host_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS], uint64_t
     return true;
 }
 
-static bool guest_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS], uint64_t now) {
+static bool guest_frame(const TremuGun *local, TremuGun guns[NET_MAX_PLAYERS], uint64_t now) {
     if (ready_unconfirmed && now - last_ready_ns > 100 * MS) {
         uint8_t p[5];
         header(p, T_READY);
@@ -794,7 +794,7 @@ static bool guest_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS], uint64_
     return true;
 }
 
-bool netplay_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS]) {
+bool netplay_frame(const TremuGun *local, TremuGun guns[NET_MAX_PLAYERS]) {
     receive();
     /* Read the clock after receive(): handlers stamp started_ns, and an earlier "now" would make
      * now - started_ns wrap around and look like a timeout. */
@@ -852,7 +852,7 @@ bool netplay_frame(const WgGun *local, WgGun guns[NET_MAX_PLAYERS]) {
             if (now - last_send_ns > 300 * MS) request_missing();
             return false;
         }
-        if (!wg_core_load_state(state_buf, state_size)) { fail(T("\xC3\x89tat de partie incompatible")); return false; }
+        if (!tremu_core_load_state(state_buf, state_size)) { fail(T("\xC3\x89tat de partie incompatible")); return false; }
         free_transfer();
         frame = transfer_frame;
         memset(local_tag, 0, sizeof local_tag);
@@ -897,13 +897,13 @@ void netplay_idle(void) {
         return;
     }
     /* Handshake and transfer states never advance the game. */
-    WgGun unused[NET_MAX_PLAYERS];
+    TremuGun unused[NET_MAX_PLAYERS];
     netplay_frame(&NEUTRAL, unused);
 }
 
 void netplay_after_frame(void) {
     if (atomic_load(&state) != NET_PLAYING || frame % CRC_EVERY) return;
-    local_crc = wg_core_ram_crc();
+    local_crc = tremu_core_ram_crc();
     local_crc_frame = frame;
     if (hosting) {
         memmove(host_crc_frames, host_crc_frames + 1, sizeof host_crc_frames - sizeof host_crc_frames[0]);
@@ -967,7 +967,7 @@ bool netplay_code(char out[12]) {
     uint16_t port = public_port;
     pthread_mutex_unlock(&public_lock);
     if (!internet || !ip) return false;
-    wfg_code_encode(ip, port, out);
+    tremu_code_encode(ip, port, out);
     return true;
 }
 

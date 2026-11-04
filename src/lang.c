@@ -17,7 +17,7 @@ static int system_language(JNIEnv *env, jclass cls) {
     return lang;
 }
 
-void wfg_lang_set(JavaVM *vm, jobject activity, int lang) {
+void tremu_lang_set(JavaVM *vm, jobject activity, int lang) {
     static JavaVM *saved_vm;
     static jobject saved_activity;
     if (vm) { saved_vm = vm; saved_activity = activity; }
@@ -39,9 +39,9 @@ void wfg_lang_set(JavaVM *vm, jobject activity, int lang) {
     LOG("language %s", LANGUAGE_NAMES[lang]);
 }
 
-WfgLang wfg_lang(void) { return (WfgLang)atomic_load(&current); }
+TremuLang tremu_lang(void) { return (TremuLang)atomic_load(&current); }
 
-const char *wfg_lang_name(WfgLang lang) { return lang < LANG_COUNT ? LANGUAGE_NAMES[lang] : ""; }
+const char *tremu_lang_name(TremuLang lang) { return lang < LANG_COUNT ? LANGUAGE_NAMES[lang] : ""; }
 
 const char *T(const char *french) {
     int lang = atomic_load(&current);
@@ -51,7 +51,7 @@ const char *T(const char *french) {
     return french;
 }
 
-void wfg_utf8_trim(char *s) {
+void tremu_utf8_trim(char *s) {
     size_t n = strlen(s), start = n;
     while (start > 0 && n - start < 4 && ((unsigned char)s[start - 1] & 0xC0) == 0x80) start--;
     if (!start) return;

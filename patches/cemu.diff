@@ -1,0 +1,928 @@
+diff --git a/src/android/app/src/main/AndroidManifest.xml b/src/android/app/src/main/AndroidManifest.xml
+index 0cb9fba..c05819c 100644
+--- a/src/android/app/src/main/AndroidManifest.xml
++++ b/src/android/app/src/main/AndroidManifest.xml
+@@ -4,11 +4,33 @@
+ 
+     <uses-permission android:name="android.permission.INTERNET" />
+     <uses-permission android:name="android.permission.VIBRATE" />
++    <uses-permission
++        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
++        tools:ignore="ScopedStorage" />
++
++    <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
++    <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
+ 
+     <uses-feature
+         android:name="android.hardware.vulkan.version"
+         android:required="true"
+         android:version="0x401000" />
++    <uses-feature
++        android:name="android.hardware.vr.headtracking"
++        android:required="false"
++        android:version="1" />
++
++    <queries>
++        <provider android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />
++        <intent>
++            <action android:name="org.khronos.openxr.OpenXRRuntimeService" />
++        </intent>
++        <intent>
++            <action android:name="org.khronos.openxr.OpenXRApiLayerService" />
++        </intent>
++        <!-- Android 11+ hides other apps: needed to return to the launcher that started the game. -->
++        <package android:name="com.tremu.app" />
++    </queries>
+ 
+     <application
+         android:name=".CemuApplication"
+@@ -32,12 +54,18 @@
+         </activity>
+         <activity
+             android:name=".emulation.EmulationActivity"
+-            android:configChanges="orientation|screenSize"
++            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboard|keyboardHidden|navigation|uiMode"
+             android:exported="true"
+             android:launchMode="singleTop"
+             android:parentActivityName=".MainActivity"
+             android:screenOrientation="userLandscape"
+             tools:ignore="DiscouragedApi">
++            <intent-filter>
++                <action android:name="android.intent.action.MAIN" />
++
++                <category android:name="android.intent.category.DEFAULT" />
++                <category android:name="com.oculus.intent.category.VR" />
++            </intent-filter>
+             <intent-filter>
+                 <action android:name="android.intent.action.VIEW" />
+ 
+diff --git a/src/android/app/src/main/cpp/CMakeLists.txt b/src/android/app/src/main/cpp/CMakeLists.txt
+index f4ddc11..f3d9657 100644
+--- a/src/android/app/src/main/cpp/CMakeLists.txt
++++ b/src/android/app/src/main/cpp/CMakeLists.txt
+@@ -17,9 +17,17 @@ add_library(CemuAndroid SHARED
+         NativeLogging.cpp
+         NativeSettings.cpp
+         NativeSwkbd.cpp
++        NativeXr.cpp
+         WuaConverter.cpp
+ )
+ 
++set(OPENXR_DIR "G:/Projets/WFVR/time-crisis-vr/.tools/openxr/prefab/modules")
++target_include_directories(CemuAndroid PRIVATE "${OPENXR_DIR}/headers/include")
++target_link_libraries(CemuAndroid PRIVATE
++        "${OPENXR_DIR}/openxr_loader/libs/android.arm64-v8a/libopenxr_loader.so"
++        EGL
++)
++
+ cemu_use_precompiled_header(CemuAndroid)
+ 
+ target_link_libraries(CemuAndroid PRIVATE
+diff --git a/src/android/app/src/main/cpp/GameTitleLoader.cpp b/src/android/app/src/main/cpp/GameTitleLoader.cpp
+index 9b5ea5d..c4b6779 100644
+--- a/src/android/app/src/main/cpp/GameTitleLoader.cpp
++++ b/src/android/app/src/main/cpp/GameTitleLoader.cpp
+@@ -41,6 +41,7 @@ void GameTitleLoader::ReloadGameTitles()
+ 	CafeTitleList::ClearScanPaths();
+ 	for (auto&& gamePath : GetConfig().game_paths)
+ 		CafeTitleList::AddScanPath(gamePath);
++	CafeTitleList::AddScanPath("/storage/emulated/0/Download/Roms/wiiu");
+ 	CafeTitleList::Refresh();
+ 	m_callbackIdTitleList = CafeTitleList::RegisterCallback([](CafeTitleListCallbackEvent* evt, void* ctx) { static_cast<GameTitleLoader*>(ctx)->HandleTitleListCallback(evt); }, this);
+ }
+diff --git a/src/android/app/src/main/cpp/NativeEmulation.cpp b/src/android/app/src/main/cpp/NativeEmulation.cpp
+index 82c1117..b76e235 100644
+--- a/src/android/app/src/main/cpp/NativeEmulation.cpp
++++ b/src/android/app/src/main/cpp/NativeEmulation.cpp
+@@ -329,6 +329,30 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_initializeSystems([[maybe_un
+ 	NativeEmulation::InitializeAudioDevices();
+ }
+ 
++// Updates and DLC sit beside the game: anywhere in its "wiiu" folder, else in its own folder.
++static void AddTitlesBeside(const fs::path& launchPath)
++{
++	fs::path root = launchPath.parent_path();
++	for (fs::path p = root; p.has_relative_path(); p = p.parent_path())
++	{
++		if (boost::iequals(_pathToUtf8(p.filename()), "wiiu"))
++		{
++			root = p;
++			break;
++		}
++	}
++	std::error_code ec;
++	fs::recursive_directory_iterator it(root, ec), end;
++	for (; !ec && it != end; it.increment(ec))
++	{
++		if (it.depth() >= 2)
++			it.disable_recursion_pending();
++		const std::string name = _pathToUtf8(it->path().filename());
++		if (it->path() != launchPath && (boost::iequals(name, "title.tmd") || boost::iends_with(name, ".wua")))
++			CafeTitleList::AddTitleFromPath(it->path());
++	}
++}
++
+ extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+ Java_info_cemu_cemu_nativeinterface_NativeEmulation_prepareTitle([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jstring launchPathJava)
+ {
+@@ -340,6 +364,8 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_prepareTitle([[maybe_unused]
+ 
+ 	if (launchTitle.IsValid())
+ 	{
++		if (launchPath.is_absolute())
++			AddTitlesBeside(launchPath);
+ 		// the title might not be in the TitleList, so we add it as a temporary entry
+ 		CafeTitleList::AddTitleFromPath(launchPath);
+ 		// title is valid, launch from TitleId
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt b/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt
+index f695707..76d437d 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt
+@@ -25,6 +25,7 @@ import info.cemu.cemu.common.ui.components.ActivityContent
+ import info.cemu.cemu.common.ui.localization.TranslatableContent
+ import info.cemu.cemu.emulation.EmulationActivity
+ import info.cemu.cemu.games.GameListRoute
++import info.cemu.cemu.common.android.context.requestAllFilesAccess
+ import info.cemu.cemu.games.gamesNavigation
+ import info.cemu.cemu.graphicpacks.GraphicPacksRoute
+ import info.cemu.cemu.graphicpacks.graphicPacksNavigation
+@@ -58,6 +59,7 @@ class MainActivity : AppCompatActivity() {
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
++        requestAllFilesAccess()
+         setContent {
+             TranslatableContent {
+                 ActivityContent {
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt
+index 29a5c74..d88cf1d 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt
+@@ -14,6 +14,7 @@ import androidx.lifecycle.Lifecycle
+ import androidx.lifecycle.lifecycleScope
+ import androidx.lifecycle.repeatOnLifecycle
+ import info.cemu.cemu.BuildConfig
++import info.cemu.cemu.common.android.context.requestAllFilesAccess
+ import info.cemu.cemu.common.android.inputevent.isFromPhysicalController
+ import info.cemu.cemu.common.settings.AppSettingsStore
+ import info.cemu.cemu.common.ui.components.ActivityContent
+@@ -25,6 +26,8 @@ import info.cemu.cemu.emulation.input.DeviceMotionHandler
+ import info.cemu.cemu.emulation.input.HotkeyManager
+ import info.cemu.cemu.emulation.input.InputHandler
+ import info.cemu.cemu.emulation.input.NativeInputDeviceListener
++import info.cemu.cemu.nativeinterface.NativeInput
++import info.cemu.cemu.nativeinterface.NativeXr
+ import kotlinx.coroutines.flow.distinctUntilChanged
+ import kotlinx.coroutines.flow.map
+ import kotlinx.coroutines.launch
+@@ -115,6 +118,18 @@ class EmulationActivity : AppCompatActivity() {
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+ 
++        if (!requestAllFilesAccess()) {
++            finish()
++            return
++        }
++
++        // A fresh install has no controller at all: the game would wait forever and the overlay stays empty.
++        if (NativeInput.isControllerDisabled(0)) {
++            NativeInput.setControllerType(0, NativeInput.EmulatedControllerType.VPAD)
++        }
++
++        NativeXr.startSession(this)
++
+         inputManager = InputDelegateManager(this)
+ 
+         setupHotkeys()
+@@ -169,12 +184,20 @@ class EmulationActivity : AppCompatActivity() {
+         controller.hide(WindowInsetsCompat.Type.systemBars())
+     }
+ 
++    /** Called by the OpenXR thread: the left menu button was held, or the session ended. */
++    @androidx.annotation.Keep
++    fun onXrQuit() = runOnUiThread(::onQuit)
++
+     private fun onQuit() {
++        intent.getStringExtra(EXTRA_RETURN_PACKAGE)?.let { caller ->
++            packageManager.getLaunchIntentForPackage(caller)?.let(::startActivity)
++        }
+         finish()
+         exitProcess(0)
+     }
+ 
+     companion object {
+         const val EXTRA_LAUNCH_PATH: String = BuildConfig.APPLICATION_ID + ".LaunchPath"
++        const val EXTRA_RETURN_PACKAGE: String = BuildConfig.APPLICATION_ID + ".ReturnPackage"
+     }
+ }
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt
+index 2a58ee0..7042fd3 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt
+@@ -68,6 +68,7 @@ import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.D
+ import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.EDIT_POSITION
+ import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.EDIT_SIZE
+ import info.cemu.cemu.nativeinterface.NativeEmulation
++import info.cemu.cemu.nativeinterface.NativeXr
+ import kotlinx.coroutines.launch
+ 
+ @Composable
+@@ -90,6 +91,7 @@ fun EmulationScreen(
+ 
+     val emulationError by viewModel.emulationError.collectAsState()
+     val isEmulationInitialized by viewModel.isEmulationInitialized.collectAsState()
++    val isEmulationStarting by viewModel.isEmulationStarting.collectAsState()
+     val sideMenuState by viewModel.sideMenuState.collectAsState()
+     val gamePadPosition by viewModel.gamePadPosition.collectAsState()
+     val isInputOverlayVisible by viewModel.isInputOverlayVisible.collectAsState()
+@@ -126,6 +128,10 @@ fun EmulationScreen(
+         setInputListeningEnabled(drawerState.isClosed)
+     }
+ 
++    LaunchedEffect(Unit) {
++        NativeXr.surface?.let(viewModel::useXrSurface)
++    }
++
+     LaunchedEffect(Unit) {
+         HotkeyManager.actions.collect { action ->
+             when (action) {
+@@ -221,10 +227,19 @@ fun EmulationScreen(
+     }
+ 
+     emulationError?.let {
+-        EmulationErrorDialog(it, onQuit)
++        // A dialog is invisible during an OpenXR session: leave rather than show an empty screen.
++        if (NativeXr.surface != null) {
++            LaunchedEffect(it) {
++                android.util.Log.e("CemuXr", "emulation error: $it")
++                onQuit()
++            }
++        } else {
++            EmulationErrorDialog(it, onQuit)
++        }
+     }
+ 
+-    if (!isEmulationInitialized) {
++    // Quest: a dialog window over the SurfaceView seems to keep its surface from being created.
++    if (isEmulationStarting && !isEmulationInitialized) {
+         EmulationLoadingDialog()
+     }
+ 
+@@ -396,7 +411,7 @@ private fun EmulationSurfaces(
+     padHolderCallback: SurfaceHolder.Callback,
+     onInitializeEmulation: () -> Unit
+ ) {
+-    if (gamePadPosition == null) {
++    if (gamePadPosition == null || NativeXr.surface != null) {
+         return
+     }
+ 
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt
+index e5c96ff..dbbb682 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt
+@@ -22,6 +22,7 @@ import info.cemu.cemu.common.settings.OverlayInputConfig
+ import info.cemu.cemu.nativeinterface.NativeEmulation
+ import info.cemu.cemu.nativeinterface.NativeEmulation.PrepareTitleResult
+ import info.cemu.cemu.nativeinterface.NativeException
++import info.cemu.cemu.nativeinterface.NativeXr
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.flow.MutableStateFlow
+@@ -138,6 +139,7 @@ class EmulationViewModel(
+ 
+     private inner class CanvasSurfaceHolderCallback(val isMainCanvas: Boolean) :
+         SurfaceHolder.Callback {
++        private var currentSurface: android.view.Surface? = null
+ 
+         override fun surfaceCreated(surfaceHolder: SurfaceHolder) {}
+ 
+@@ -150,10 +152,17 @@ class EmulationViewModel(
+             try {
+                 NativeEmulation.setSurfaceSize(width, height, isMainCanvas)
+ 
++                // Quest: a new SurfaceView can report in before the old one is destroyed.
++                val isNewSurface = currentSurface !== surfaceHolder.surface
++                if (setSurfaces.get(isMainCanvas) && isNewSurface) {
++                    releaseSurface()
++                }
++
+                 if (setSurfaces.get(isMainCanvas)) {
+                     return
+                 }
+ 
++                currentSurface = surfaceHolder.surface
+                 NativeEmulation.setSurface(surfaceHolder.surface, isMainCanvas)
+                 val mainSurfaceWasDestroyed = destroyedSurfaces.get(isMain = true)
+ 
+@@ -175,6 +184,14 @@ class EmulationViewModel(
+         }
+ 
+         override fun surfaceDestroyed(surfaceHolder: SurfaceHolder) {
++            if (currentSurface !== surfaceHolder.surface) {
++                return
++            }
++
++            releaseSurface()
++        }
++
++        private fun releaseSurface() {
+             if (setSurfaces.get(isMain = false)) {
+                 NativeEmulation.clearPadSurface()
+                 setSurfaces.set(isMain = false, false)
+@@ -190,6 +207,13 @@ class EmulationViewModel(
+         }
+     }
+ 
++    fun useXrSurface(surface: android.view.Surface) {
++        NativeEmulation.setSurfaceSize(NativeXr.SCREEN_WIDTH, NativeXr.SCREEN_HEIGHT, true)
++        NativeEmulation.setSurface(surface, true)
++        setSurfaces.set(isMain = true, true)
++        initializeEmulation()
++    }
++
+     val mainHolderCallback: SurfaceHolder.Callback = CanvasSurfaceHolderCallback(true)
+     val padHolderCallback: SurfaceHolder.Callback = CanvasSurfaceHolderCallback(false)
+ 
+@@ -221,6 +245,8 @@ class EmulationViewModel(
+         attemptWithContext(Dispatchers.IO) { NativeEmulation.launchTitle() }
+             .mapError { NativeError.LaunchingTitleError }
+ 
++    private val _isEmulationStarting = MutableStateFlow(false)
++    val isEmulationStarting = _isEmulationStarting.asStateFlow()
+     private val _isEmulationInitialized = MutableStateFlow(false)
+     val isEmulationInitialized = _isEmulationInitialized.asStateFlow()
+     private var emulationInitializationJob: Job? = null
+@@ -229,6 +255,7 @@ class EmulationViewModel(
+             return
+         }
+ 
++        _isEmulationStarting.value = true
+         emulationInitializationJob = viewModelScope.launch {
+             prepareTitle()
+                 .bind { initializeSystems() }
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt
+index f11f3e8..235d22b 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt
+@@ -6,6 +6,33 @@ import info.cemu.cemu.common.android.inputevent.isFromPhysicalController
+ import info.cemu.cemu.nativeinterface.NativeInput
+ 
+ object InputHandler {
++    /** Quest: the Touch controllers play the first GamePad without any mapping to set up. */
++    private fun defaultButton(keyCode: Int) = when (keyCode) {
++        KeyEvent.KEYCODE_BUTTON_A -> NativeInput.VPADButton.A
++        KeyEvent.KEYCODE_BUTTON_B -> NativeInput.VPADButton.B
++        KeyEvent.KEYCODE_BUTTON_X -> NativeInput.VPADButton.X
++        KeyEvent.KEYCODE_BUTTON_Y -> NativeInput.VPADButton.Y
++        KeyEvent.KEYCODE_BUTTON_L1 -> NativeInput.VPADButton.L
++        KeyEvent.KEYCODE_BUTTON_R1 -> NativeInput.VPADButton.R
++        KeyEvent.KEYCODE_BUTTON_L2 -> NativeInput.VPADButton.ZL
++        KeyEvent.KEYCODE_BUTTON_R2 -> NativeInput.VPADButton.ZR
++        KeyEvent.KEYCODE_BUTTON_THUMBL -> NativeInput.VPADButton.STICKL
++        KeyEvent.KEYCODE_BUTTON_THUMBR -> NativeInput.VPADButton.STICKR
++        KeyEvent.KEYCODE_BUTTON_START -> NativeInput.VPADButton.PLUS
++        KeyEvent.KEYCODE_BUTTON_SELECT -> NativeInput.VPADButton.MINUS
++        else -> -1
++    }
++
++    private fun usesDefaultMapping() = !NativeInput.isControllerDisabled(0)
++            && NativeInput.getControllerType(0) == NativeInput.EmulatedControllerType.VPAD
++
++    private fun setDefaultStick(up: Int, down: Int, left: Int, right: Int, x: Float, y: Float) {
++        NativeInput.onOverlayAxis(0, up, (-y).coerceAtLeast(0f))
++        NativeInput.onOverlayAxis(0, down, y.coerceAtLeast(0f))
++        NativeInput.onOverlayAxis(0, left, (-x).coerceAtLeast(0f))
++        NativeInput.onOverlayAxis(0, right, x.coerceAtLeast(0f))
++    }
++
+     fun onKeyEvent(event: KeyEvent): Boolean {
+         if (!event.isFromPhysicalController()) {
+             return false
+@@ -19,6 +46,11 @@ object InputHandler {
+             event.action == KeyEvent.ACTION_DOWN
+         )
+ 
++        val button = defaultButton(event.keyCode)
++        if (button != -1 && usesDefaultMapping()) {
++            NativeInput.onOverlayButton(0, button, event.action == KeyEvent.ACTION_DOWN)
++        }
++
+         return true
+     }
+ 
+@@ -35,6 +67,21 @@ object InputHandler {
+             NativeInput.onControllerAxis(device.descriptor, axis, axisValue)
+         }
+ 
++        if (usesDefaultMapping()) {
++            setDefaultStick(
++                NativeInput.VPADButton.STICKL_UP, NativeInput.VPADButton.STICKL_DOWN,
++                NativeInput.VPADButton.STICKL_LEFT, NativeInput.VPADButton.STICKL_RIGHT,
++                event.getAxisValue(MotionEvent.AXIS_X), event.getAxisValue(MotionEvent.AXIS_Y),
++            )
++            setDefaultStick(
++                NativeInput.VPADButton.STICKR_UP, NativeInput.VPADButton.STICKR_DOWN,
++                NativeInput.VPADButton.STICKR_LEFT, NativeInput.VPADButton.STICKR_RIGHT,
++                event.getAxisValue(MotionEvent.AXIS_Z), event.getAxisValue(MotionEvent.AXIS_RZ),
++            )
++            NativeInput.onOverlayButton(0, NativeInput.VPADButton.ZL, event.getAxisValue(MotionEvent.AXIS_LTRIGGER) > 0.5f)
++            NativeInput.onOverlayButton(0, NativeInput.VPADButton.ZR, event.getAxisValue(MotionEvent.AXIS_RTRIGGER) > 0.5f)
++        }
++
+         return true
+     }
+ }
+diff --git a/vcpkg.json b/vcpkg.json
+index aace925..9254bfe 100644
+--- a/vcpkg.json
++++ b/vcpkg.json
+@@ -48,7 +48,6 @@
+       "name": "fmt",
+       "version>=": "12.1.0"
+     },
+-    "hidapi",
+     "libpng",
+     "glm",
+     {
+diff --git a/src/android/app/src/main/cpp/NativeXr.cpp b/src/android/app/src/main/cpp/NativeXr.cpp
+new file mode 100644
+--- /dev/null
++++ b/src/android/app/src/main/cpp/NativeXr.cpp
+@@ -0,0 +1,422 @@
++// Quest: the game as a big screen in an OpenXR session, which is also the only way to read the Touch controllers.
++#include "AndroidInputHelpers.h"
++#include "Cafe/CafeSystem.h"
++#include "input/emulated/VPADController.h"
++
++#include <android/log.h>
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <jni.h>
++
++#define XR_USE_PLATFORM_ANDROID
++#define XR_USE_GRAPHICS_API_OPENGL_ES
++#include <openxr/openxr.h>
++#include <openxr/openxr_platform.h>
++
++#include <condition_variable>
++#include <mutex>
++#include <thread>
++
++#define XR_LOG(...) __android_log_print(ANDROID_LOG_INFO, "CemuXr", __VA_ARGS__)
++
++namespace
++{
++	constexpr int SCREEN_WIDTH = 1920;
++	constexpr int SCREEN_HEIGHT = 1080;
++	constexpr float SCREEN_WIDTH_METERS = 3.2f;
++	constexpr float SCREEN_DISTANCE_METERS = 2.2f;
++	constexpr auto QUIT_HOLD = std::chrono::milliseconds(1500);
++
++	struct XrButton
++	{
++		const char* name;
++		const char* path;
++		uint64 button;
++		XrAction action = XR_NULL_HANDLE;
++	};
++
++	XrButton s_buttons[] = {
++		{"a", "/user/hand/right/input/a/click", VPADController::kButtonId_A},
++		{"b", "/user/hand/right/input/b/click", VPADController::kButtonId_B},
++		{"x", "/user/hand/left/input/x/click", VPADController::kButtonId_X},
++		{"y", "/user/hand/left/input/y/click", VPADController::kButtonId_Y},
++		{"stick_l", "/user/hand/left/input/thumbstick/click", VPADController::kButtonId_StickL},
++		{"stick_r", "/user/hand/right/input/thumbstick/click", VPADController::kButtonId_StickR},
++	};
++
++	XrInstance s_instance = XR_NULL_HANDLE;
++	XrSession s_session = XR_NULL_HANDLE;
++	XrSpace s_space = XR_NULL_HANDLE;
++	XrSwapchain s_swapchain = XR_NULL_HANDLE;
++	XrActionSet s_actionSet = XR_NULL_HANDLE;
++	XrAction s_triggerL, s_triggerR, s_gripL, s_gripR, s_stickL, s_stickR, s_menu;
++	XrSessionState s_state = XR_SESSION_STATE_UNKNOWN;
++	bool s_running = false;
++	bool s_titlePaused = false;
++	JavaVM* s_vm = nullptr;
++	jobject s_activity = nullptr;
++	jobject s_surface = nullptr;
++	bool s_startFinished = false;
++	std::mutex s_startMutex;
++	std::condition_variable s_startDone;
++
++	XrPath Path(const char* text)
++	{
++		XrPath path = XR_NULL_PATH;
++		xrStringToPath(s_instance, text, &path);
++		return path;
++	}
++
++	bool CreateAction(XrAction& action, const char* name, XrActionType type)
++	{
++		XrActionCreateInfo info{XR_TYPE_ACTION_CREATE_INFO};
++		info.actionType = type;
++		snprintf(info.actionName, sizeof(info.actionName), "%s", name);
++		snprintf(info.localizedActionName, sizeof(info.localizedActionName), "%s", name);
++		return XR_SUCCEEDED(xrCreateAction(s_actionSet, &info, &action));
++	}
++
++	bool InitActions()
++	{
++		XrActionSetCreateInfo setInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
++		strcpy(setInfo.actionSetName, "cemu");
++		strcpy(setInfo.localizedActionSetName, "Cemu");
++		if (XR_FAILED(xrCreateActionSet(s_instance, &setInfo, &s_actionSet)))
++			return false;
++
++		std::vector<XrActionSuggestedBinding> bindings;
++		for (auto& button : s_buttons)
++		{
++			if (!CreateAction(button.action, button.name, XR_ACTION_TYPE_BOOLEAN_INPUT))
++				return false;
++			bindings.push_back({button.action, Path(button.path)});
++		}
++		if (!CreateAction(s_triggerL, "trigger_l", XR_ACTION_TYPE_FLOAT_INPUT) ||
++			!CreateAction(s_triggerR, "trigger_r", XR_ACTION_TYPE_FLOAT_INPUT) ||
++			!CreateAction(s_gripL, "grip_l", XR_ACTION_TYPE_FLOAT_INPUT) ||
++			!CreateAction(s_gripR, "grip_r", XR_ACTION_TYPE_FLOAT_INPUT) ||
++			!CreateAction(s_stickL, "stick_axis_l", XR_ACTION_TYPE_VECTOR2F_INPUT) ||
++			!CreateAction(s_stickR, "stick_axis_r", XR_ACTION_TYPE_VECTOR2F_INPUT) ||
++			!CreateAction(s_menu, "menu", XR_ACTION_TYPE_BOOLEAN_INPUT))
++			return false;
++		bindings.push_back({s_triggerL, Path("/user/hand/left/input/trigger/value")});
++		bindings.push_back({s_triggerR, Path("/user/hand/right/input/trigger/value")});
++		bindings.push_back({s_gripL, Path("/user/hand/left/input/squeeze/value")});
++		bindings.push_back({s_gripR, Path("/user/hand/right/input/squeeze/value")});
++		bindings.push_back({s_stickL, Path("/user/hand/left/input/thumbstick")});
++		bindings.push_back({s_stickR, Path("/user/hand/right/input/thumbstick")});
++		bindings.push_back({s_menu, Path("/user/hand/left/input/menu/click")});
++
++		XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
++		suggested.interactionProfile = Path("/interaction_profiles/oculus/touch_controller");
++		suggested.suggestedBindings = bindings.data();
++		suggested.countSuggestedBindings = static_cast<uint32_t>(bindings.size());
++		if (XR_FAILED(xrSuggestInteractionProfileBindings(s_instance, &suggested)))
++			return false;
++
++		XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
++		attach.countActionSets = 1;
++		attach.actionSets = &s_actionSet;
++		return XR_SUCCEEDED(xrAttachSessionActionSets(s_session, &attach));
++	}
++
++	bool InitXr(JNIEnv* env)
++	{
++		PFN_xrInitializeLoaderKHR initLoader = nullptr;
++		xrGetInstanceProcAddr(XR_NULL_HANDLE, "xrInitializeLoaderKHR", reinterpret_cast<PFN_xrVoidFunction*>(&initLoader));
++		if (initLoader == nullptr)
++			return false;
++		XrLoaderInitInfoAndroidKHR loaderInfo{XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR};
++		loaderInfo.applicationVM = s_vm;
++		loaderInfo.applicationContext = s_activity;
++		initLoader(reinterpret_cast<XrLoaderInitInfoBaseHeaderKHR*>(&loaderInfo));
++
++		const char* extensions[] = {
++			XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
++			XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
++			XR_KHR_ANDROID_SURFACE_SWAPCHAIN_EXTENSION_NAME,
++			// A Vulkan image in that swapchain reaches the compositor upside down.
++			XR_FB_COMPOSITION_LAYER_IMAGE_LAYOUT_EXTENSION_NAME,
++		};
++		XrInstanceCreateInfoAndroidKHR androidInfo{XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
++		androidInfo.applicationVM = s_vm;
++		androidInfo.applicationActivity = s_activity;
++		XrInstanceCreateInfo instanceInfo{XR_TYPE_INSTANCE_CREATE_INFO};
++		instanceInfo.next = &androidInfo;
++		strcpy(instanceInfo.applicationInfo.applicationName, "Cemu");
++		instanceInfo.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 34);
++		instanceInfo.enabledExtensionCount = 4;
++		instanceInfo.enabledExtensionNames = extensions;
++		XrResult result = xrCreateInstance(&instanceInfo, &s_instance);
++		if (XR_FAILED(result))
++		{
++			XR_LOG("xrCreateInstance failed: %d", result);
++			return false;
++		}
++
++		XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};
++		systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
++		XrSystemId system;
++		if (XR_FAILED(xrGetSystem(s_instance, &systemInfo, &system)))
++			return false;
++
++		// The session needs a GL context even though Vulkan draws everything through the Surface.
++		EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
++		eglInitialize(display, nullptr, nullptr);
++		const EGLint configAttribs[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR, EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_NONE};
++		EGLConfig config;
++		EGLint configCount = 0;
++		if (!eglChooseConfig(display, configAttribs, &config, 1, &configCount) || configCount < 1)
++			return false;
++		const EGLint contextAttribs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
++		EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
++		const EGLint surfaceAttribs[] = {EGL_WIDTH, 16, EGL_HEIGHT, 16, EGL_NONE};
++		EGLSurface pbuffer = eglCreatePbufferSurface(display, config, surfaceAttribs);
++		if (context == EGL_NO_CONTEXT || !eglMakeCurrent(display, pbuffer, pbuffer, context))
++			return false;
++
++		PFN_xrGetOpenGLESGraphicsRequirementsKHR glesRequirements = nullptr;
++		xrGetInstanceProcAddr(s_instance, "xrGetOpenGLESGraphicsRequirementsKHR", reinterpret_cast<PFN_xrVoidFunction*>(&glesRequirements));
++		XrGraphicsRequirementsOpenGLESKHR requirements{XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR};
++		glesRequirements(s_instance, system, &requirements);
++
++		XrGraphicsBindingOpenGLESAndroidKHR binding{XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR};
++		binding.display = display;
++		binding.config = config;
++		binding.context = context;
++		XrSessionCreateInfo sessionInfo{XR_TYPE_SESSION_CREATE_INFO};
++		sessionInfo.next = &binding;
++		sessionInfo.systemId = system;
++		result = xrCreateSession(s_instance, &sessionInfo, &s_session);
++		if (XR_FAILED(result))
++		{
++			XR_LOG("xrCreateSession failed: %d", result);
++			return false;
++		}
++
++		XrReferenceSpaceCreateInfo spaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
++		spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
++		spaceInfo.poseInReferenceSpace.orientation.w = 1;
++		if (XR_FAILED(xrCreateReferenceSpace(s_session, &spaceInfo, &s_space)) || !InitActions())
++			return false;
++
++		PFN_xrCreateSwapchainAndroidSurfaceKHR createSurface = nullptr;
++		xrGetInstanceProcAddr(s_instance, "xrCreateSwapchainAndroidSurfaceKHR", reinterpret_cast<PFN_xrVoidFunction*>(&createSurface));
++		if (createSurface == nullptr)
++			return false;
++		// Quest rejects any format, usage or count here (tested): the Surface's producer decides them.
++		XrSwapchainCreateInfo chainInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
++		chainInfo.width = SCREEN_WIDTH;
++		chainInfo.height = SCREEN_HEIGHT;
++		jobject surface = nullptr;
++		result = createSurface(s_session, &chainInfo, &s_swapchain, &surface);
++		if (XR_FAILED(result) || surface == nullptr)
++		{
++			XR_LOG("android surface swapchain failed: %d", result);
++			return false;
++		}
++		s_surface = env->NewGlobalRef(surface);
++		return true;
++	}
++
++	float GetFloat(XrAction action)
++	{
++		XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
++		info.action = action;
++		XrActionStateFloat state{XR_TYPE_ACTION_STATE_FLOAT};
++		xrGetActionStateFloat(s_session, &info, &state);
++		return state.isActive ? state.currentState : 0.0f;
++	}
++
++	bool GetBool(XrAction action)
++	{
++		XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
++		info.action = action;
++		XrActionStateBoolean state{XR_TYPE_ACTION_STATE_BOOLEAN};
++		xrGetActionStateBoolean(s_session, &info, &state);
++		return state.isActive && state.currentState;
++	}
++
++	XrVector2f GetStick(XrAction action)
++	{
++		XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
++		info.action = action;
++		XrActionStateVector2f state{XR_TYPE_ACTION_STATE_VECTOR2F};
++		xrGetActionStateVector2f(s_session, &info, &state);
++		return state.isActive ? state.currentState : XrVector2f{0, 0};
++	}
++
++	void SetStick(EmulatedControllerManager& pad, uint64 up, uint64 down, uint64 left, uint64 right, XrVector2f stick)
++	{
++		pad.SetAxisValue(up, std::max(stick.y, 0.0f));
++		pad.SetAxisValue(down, std::max(-stick.y, 0.0f));
++		pad.SetAxisValue(left, std::max(-stick.x, 0.0f));
++		pad.SetAxisValue(right, std::max(stick.x, 0.0f));
++	}
++
++	void RequestQuit(JNIEnv* env)
++	{
++		jclass activityClass = env->GetObjectClass(s_activity);
++		env->CallVoidMethod(s_activity, env->GetMethodID(activityClass, "onXrQuit", "()V"));
++		env->DeleteLocalRef(activityClass);
++	}
++
++	// Left menu is + ; with the left grip held it is - ; held down it leaves the game.
++	void UpdateInput(JNIEnv* env)
++	{
++		XrActiveActionSet active{s_actionSet, XR_NULL_PATH};
++		XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO};
++		sync.countActiveActionSets = 1;
++		sync.activeActionSets = &active;
++		if (XR_FAILED(xrSyncActions(s_session, &sync)))
++			return;
++
++		auto& pad = EmulatedControllerManager::GetController(0);
++		for (const auto& button : s_buttons)
++			pad.SetButtonValue(button.button, GetBool(button.action));
++		const float gripL = GetFloat(s_gripL);
++		pad.SetButtonValue(VPADController::kButtonId_ZL, GetFloat(s_triggerL) > 0.5f);
++		pad.SetButtonValue(VPADController::kButtonId_ZR, GetFloat(s_triggerR) > 0.5f);
++		pad.SetButtonValue(VPADController::kButtonId_L, gripL > 0.5f);
++		pad.SetButtonValue(VPADController::kButtonId_R, GetFloat(s_gripR) > 0.5f);
++		SetStick(pad, VPADController::kButtonId_StickL_Up, VPADController::kButtonId_StickL_Down,
++				 VPADController::kButtonId_StickL_Left, VPADController::kButtonId_StickL_Right, GetStick(s_stickL));
++		SetStick(pad, VPADController::kButtonId_StickR_Up, VPADController::kButtonId_StickR_Down,
++				 VPADController::kButtonId_StickR_Left, VPADController::kButtonId_StickR_Right, GetStick(s_stickR));
++
++		static std::chrono::steady_clock::time_point s_menuDown;
++		static bool s_menuWasDown = false;
++		static bool s_quitRequested = false;
++		const bool menu = GetBool(s_menu);
++		if (menu && !s_menuWasDown)
++			s_menuDown = std::chrono::steady_clock::now();
++		s_menuWasDown = menu;
++		pad.SetButtonValue(VPADController::kButtonId_Plus, menu && gripL <= 0.5f);
++		pad.SetButtonValue(VPADController::kButtonId_Minus, menu && gripL > 0.5f);
++		if (menu && !s_quitRequested && std::chrono::steady_clock::now() - s_menuDown > QUIT_HOLD)
++		{
++			s_quitRequested = true;
++			RequestQuit(env);
++		}
++	}
++
++	void SetTitlePaused(bool paused)
++	{
++		if (s_titlePaused == paused || !CafeSystem::IsTitleRunning())
++			return;
++		s_titlePaused = paused;
++		if (paused)
++			CafeSystem::PauseTitle();
++		else
++			CafeSystem::ResumeTitle();
++	}
++
++	// Returns false when the session is over for good.
++	bool PollEvents()
++	{
++		XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
++		while (xrPollEvent(s_instance, &event) == XR_SUCCESS)
++		{
++			if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
++			{
++				s_state = reinterpret_cast<XrEventDataSessionStateChanged*>(&event)->state;
++				if (s_state == XR_SESSION_STATE_READY)
++				{
++					XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO};
++					begin.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
++					s_running = XR_SUCCEEDED(xrBeginSession(s_session, &begin));
++					SetTitlePaused(false);
++				}
++				else if (s_state == XR_SESSION_STATE_STOPPING)
++				{
++					SetTitlePaused(true);
++					xrEndSession(s_session);
++					s_running = false;
++				}
++				else if (s_state == XR_SESSION_STATE_EXITING || s_state == XR_SESSION_STATE_LOSS_PENDING)
++				{
++					return false;
++				}
++			}
++			else if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING)
++			{
++				return false;
++			}
++			event = {XR_TYPE_EVENT_DATA_BUFFER};
++		}
++		return true;
++	}
++
++	void RenderFrame(JNIEnv* env)
++	{
++		XrFrameState frameState{XR_TYPE_FRAME_STATE};
++		XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
++		if (XR_FAILED(xrWaitFrame(s_session, &waitInfo, &frameState)))
++			return;
++		XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
++		xrBeginFrame(s_session, &beginInfo);
++
++		if (s_state == XR_SESSION_STATE_FOCUSED)
++			UpdateInput(env);
++
++		XrCompositionLayerImageLayoutFB layout{XR_TYPE_COMPOSITION_LAYER_IMAGE_LAYOUT_FB};
++		layout.flags = XR_COMPOSITION_LAYER_IMAGE_LAYOUT_VERTICAL_FLIP_BIT_FB;
++		XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
++		quad.next = &layout;
++		quad.space = s_space;
++		quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
++		quad.subImage.swapchain = s_swapchain;
++		quad.subImage.imageRect.extent = {SCREEN_WIDTH, SCREEN_HEIGHT};
++		quad.pose.orientation.w = 1;
++		quad.pose.position = {0, 0, -SCREEN_DISTANCE_METERS};
++		quad.size = {SCREEN_WIDTH_METERS, SCREEN_WIDTH_METERS * SCREEN_HEIGHT / SCREEN_WIDTH};
++		const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad)};
++
++		XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
++		endInfo.displayTime = frameState.predictedDisplayTime;
++		endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
++		endInfo.layerCount = frameState.shouldRender ? 1 : 0;
++		endInfo.layers = layers;
++		xrEndFrame(s_session, &endInfo);
++	}
++
++	void XrThread()
++	{
++		JNIEnv* env = nullptr;
++		s_vm->AttachCurrentThread(&env, nullptr);
++		const bool ready = InitXr(env);
++		// One OpenXR instance per process: a failed start must not block the next activity.
++		if (!ready && s_instance != XR_NULL_HANDLE)
++		{
++			xrDestroyInstance(s_instance);
++			s_instance = XR_NULL_HANDLE;
++		}
++		{
++			std::lock_guard lock(s_startMutex);
++			s_startFinished = true;
++		}
++		s_startDone.notify_all();
++		while (ready && PollEvents())
++		{
++			if (s_running)
++				RenderFrame(env);
++			else
++				std::this_thread::sleep_for(std::chrono::milliseconds(50));
++		}
++		if (ready)
++			RequestQuit(env);
++		s_vm->DetachCurrentThread();
++	}
++} // namespace
++
++extern "C" [[maybe_unused]] JNIEXPORT jobject JNICALL
++Java_info_cemu_cemu_nativeinterface_NativeXr_start(JNIEnv* env, [[maybe_unused]] jclass clazz, jobject activity)
++{
++	env->GetJavaVM(&s_vm);
++	s_activity = env->NewGlobalRef(activity);
++	s_startFinished = false;
++	std::thread(XrThread).detach();
++	std::unique_lock lock(s_startMutex);
++	s_startDone.wait(lock, [] { return s_startFinished; });
++	return s_surface;
++}
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/common/android/context/AllFilesAccess.kt b/src/android/app/src/main/java/info/cemu/cemu/common/android/context/AllFilesAccess.kt
+new file mode 100644
+--- /dev/null
++++ b/src/android/app/src/main/java/info/cemu/cemu/common/android/context/AllFilesAccess.kt
+@@ -0,0 +1,24 @@
++package info.cemu.cemu.common.android.context
++
++import android.content.ActivityNotFoundException
++import android.content.Context
++import android.content.Intent
++import android.net.Uri
++import android.os.Environment
++import android.provider.Settings
++
++// Games live in the shared Download/Roms/wiiu folder. Asks for the access once; false until it is given.
++fun Context.requestAllFilesAccess(): Boolean {
++    if (Environment.isExternalStorageManager()) return true
++    try {
++        startActivity(
++            Intent(
++                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
++                Uri.parse("package:$packageName")
++            )
++        )
++    } catch (_: ActivityNotFoundException) {
++        startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
++    }
++    return false
++}
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/nativeinterface/NativeXr.kt b/src/android/app/src/main/java/info/cemu/cemu/nativeinterface/NativeXr.kt
+new file mode 100644
+--- /dev/null
++++ b/src/android/app/src/main/java/info/cemu/cemu/nativeinterface/NativeXr.kt
+@@ -0,0 +1,20 @@
++package info.cemu.cemu.nativeinterface
++
++import android.app.Activity
++import android.view.Surface
++
++object NativeXr {
++    const val SCREEN_WIDTH = 1920
++    const val SCREEN_HEIGHT = 1080
++
++    /** Set once the OpenXR session owns the display: the game draws into it, without any SurfaceView. */
++    var surface: Surface? = null
++        private set
++
++    fun startSession(activity: Activity) {
++        surface = start(activity)
++    }
++
++    @JvmStatic
++    private external fun start(activity: Activity): Surface?
++}

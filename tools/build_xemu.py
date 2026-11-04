@@ -46,7 +46,7 @@ def main():
             f'-DPYTHON_EXECUTABLE={sys.executable}', env=env)
     run(CMAKE, '--build', BUILD, '--parallel', jobs, env=env)
     strip = NDK / 'toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe'
-    run(strip, '--strip-debug', '-o', ROOT / 'third_party' / 'xemu_wfg_libretro_android.so', BUILD / 'libxemu.so')
+    run(strip, '--strip-debug', '-o', ROOT / 'third_party' / 'xemu_tremu_libretro_android.so', BUILD / 'libxemu.so')
     run(strip, '--strip-unneeded', '-o', ROOT / 'third_party' / 'libSDL2.so', BUILD / 'sdl2-local' / 'libSDL2.so')
 
 

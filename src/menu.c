@@ -12,18 +12,18 @@
 
 typedef struct Item {
     const char *label;
-    int *(*field)(WfgOptions *);  /* NULL for actions and toggles */
+    int *(*field)(TremuOptions *);  /* NULL for actions and toggles */
     int min, max, step;
     const char *unit;
 } Item;
 
-static int *gun_pitch(WfgOptions *o) { return &o->gun_pitch; }
-static int *gun_drop(WfgOptions *o) { return &o->gun_drop; }
-static int *gun_back(WfgOptions *o) { return &o->gun_back; }
-static int *screen_distance(WfgOptions *o) { return &o->screen_distance; }
-static int *screen_width(WfgOptions *o) { return &o->screen_width; }
-static int *screen_height(WfgOptions *o) { return &o->screen_height; }
-static int *stereo(WfgOptions *o) { return &o->stereo; }
+static int *gun_pitch(TremuOptions *o) { return &o->gun_pitch; }
+static int *gun_drop(TremuOptions *o) { return &o->gun_drop; }
+static int *gun_back(TremuOptions *o) { return &o->gun_back; }
+static int *screen_distance(TremuOptions *o) { return &o->screen_distance; }
+static int *screen_width(TremuOptions *o) { return &o->screen_width; }
+static int *screen_height(TremuOptions *o) { return &o->screen_height; }
+static int *stereo(TremuOptions *o) { return &o->stereo; }
 
 enum { ITEM_BACK = 0, ITEM_CROSSHAIR = 7, ITEM_VIBRATION, ITEM_VOXELS, ITEM_AI_DEPTH, ITEM_STEREO, ITEM_EXT, ITEM_PADS, ITEM_PERF, ITEM_LOCAL_P2, ITEM_MULTI, ITEM_SAVE, ITEM_LOAD, ITEM_RECENTER, ITEM_BACKGROUND, ITEM_X360_DRIVER, ITEM_LANGUAGE, ITEM_RESUME, ITEM_QUIT, ITEM_COUNT };
 static const Item items[ITEM_COUNT] = {
@@ -64,7 +64,7 @@ enum { MAX_MULTI = 10 };
 static char multi[MAX_MULTI][64];
 static int multi_count, multi_current, multi_pick;
 
-void wfg_menu_set_multiplayer(const char choices[][64], int count, int current) {
+void tremu_menu_set_multiplayer(const char choices[][64], int count, int current) {
     if (count > MAX_MULTI) count = MAX_MULTI;
     bool same = count == multi_count && current == multi_current;
     for (int i = 0; same && i < count; i++) same = !strcmp(choices[i], multi[i]);
@@ -77,17 +77,17 @@ void wfg_menu_set_multiplayer(const char choices[][64], int count, int current) 
     dirty = true;
 }
 
-int wfg_menu_multiplayer_pick(void) { return multi_pick; }
+int tremu_menu_multiplayer_pick(void) { return multi_pick; }
 
 /* The learning screen stays up until the last button is assigned. */
 static bool learn_shown;
 static int learn_drawn = -1;
 static unsigned signal_drawn;
 
-/* Party code being typed: indexes into WFG_CODE_ALPHABET, kept between attempts. */
+/* Party code being typed: indexes into TREMU_CODE_ALPHABET, kept between attempts. */
 static bool code_mode;
-static int code_digits[WFG_CODE_LENGTH], code_cursor;
-static char code_text[WFG_CODE_LENGTH + 1];
+static int code_digits[TREMU_CODE_LENGTH], code_cursor;
+static char code_text[TREMU_CODE_LENGTH + 1];
 
 /* Text asked by the game: a line of characters edited like the code; the cursor may also stand on
  * the empty place after the last character, where changing the character adds one. */
@@ -97,7 +97,7 @@ static bool text_mode;
 static char text_title[80], text_value[TEXT_MAX + 1];
 static int text_cursor, text_limit;
 
-void wfg_menu_begin_text(const char *title, const char *text, unsigned max_length) {
+void tremu_menu_begin_text(const char *title, const char *text, unsigned max_length) {
     text_mode = true;
     snprintf(text_title, sizeof text_title, "%s", title);
     snprintf(text_value, sizeof text_value, "%s", text);
@@ -108,7 +108,7 @@ void wfg_menu_begin_text(const char *title, const char *text, unsigned max_lengt
     dirty = true;
 }
 
-void wfg_menu_text_erase(void) {
+void tremu_menu_text_erase(void) {
     int n = (int)strlen(text_value);
     if (!text_mode || !n) return;
     if (text_cursor == n) text_cursor = n - 1;
@@ -116,23 +116,23 @@ void wfg_menu_text_erase(void) {
     dirty = true;
 }
 
-const char *wfg_menu_text(void) {
+const char *tremu_menu_text(void) {
     int n = (int)strlen(text_value);
     while (n > 0 && text_value[n - 1] == ' ') text_value[--n] = 0;  /* extra spaces erase the end */
     return text_value;
 }
 
-void wfg_menu_begin_code(void) {
+void tremu_menu_begin_code(void) {
     code_mode = true;
     code_cursor = 0;
     dirty = true;
 }
 
-bool wfg_menu_entering_code(void) { return code_mode; }
+bool tremu_menu_entering_code(void) { return code_mode; }
 
-const char *wfg_menu_code(void) {
-    for (int i = 0; i < WFG_CODE_LENGTH; i++) code_text[i] = WFG_CODE_ALPHABET[code_digits[i]];
-    code_text[WFG_CODE_LENGTH] = 0;
+const char *tremu_menu_code(void) {
+    for (int i = 0; i < TREMU_CODE_LENGTH; i++) code_text[i] = TREMU_CODE_ALPHABET[code_digits[i]];
+    code_text[TREMU_CODE_LENGTH] = 0;
     return code_text;
 }
 /* "Console controls" page: one console's Touch-to-pad table. Lines: the console, the Touch
@@ -142,8 +142,8 @@ enum { PAD_LINE_CONSOLE = 0, PAD_LINE_FIRST_INPUT = 1, PAD_LINE_RESET = PAD_LINE
 static bool pad_mode;
 static int pad_console, pad_line;
 
-void wfg_menu_set_pad_console(int console) {
-    if (console >= 0 && console < WFG_PAD_CONSOLES) pad_console = console;
+void tremu_menu_set_pad_console(int console) {
+    if (console >= 0 && console < TREMU_PAD_CONSOLES) pad_console = console;
 }
 
 /* "Optimisation" page: the settings of this game, or of all games. */
@@ -153,7 +153,7 @@ static bool perf_mode, perf_for_game;
 static int perf_line, perf_system = -1;
 static char perf_game[64], perf_title[64], perf_speed_drawn[128], perf_system_drawn[128];
 
-void wfg_menu_set_perf_game(const char *key, const char *title, int system) {
+void tremu_menu_set_perf_game(const char *key, const char *title, int system) {
     snprintf(perf_game, sizeof perf_game, "%s", key);
     snprintf(perf_title, sizeof perf_title, "%s", title);
     perf_system = system;
@@ -161,40 +161,40 @@ void wfg_menu_set_perf_game(const char *key, const char *title, int system) {
 }
 
 static const char *perf_profile_name(int profile) {
-    static const char *const names[WFG_PERF_PROFILES] = {"Automatique", "Batterie", "\xC3\x89quilibr\xC3\xA9", "Performance",
+    static const char *const names[TREMU_PERF_PROFILES] = {"Automatique", "Batterie", "\xC3\x89quilibr\xC3\xA9", "Performance",
                                                          "Qualit\xC3\xA9", "Personnalis\xC3\xA9"};
-    return T(names[profile >= 0 && profile < WFG_PERF_PROFILES ? profile : 0]);
+    return T(names[profile >= 0 && profile < TREMU_PERF_PROFILES ? profile : 0]);
 }
 
 static const char *perf_level_name(int level) {
-    static const char *const names[WFG_PERF_LEVELS] = {"\303\211conomie", "Mod\xC3\xA9r\xC3\xA9", "\xC3\x89lev\xC3\xA9", "Maximum"};
-    return T(names[level >= 0 && level < WFG_PERF_LEVELS ? level : 0]);
+    static const char *const names[TREMU_PERF_LEVELS] = {"\303\211conomie", "Mod\xC3\xA9r\xC3\xA9", "\xC3\x89lev\xC3\xA9", "Maximum"};
+    return T(names[level >= 0 && level < TREMU_PERF_LEVELS ? level : 0]);
 }
 
 /* Left/right or A on a line of the page: h is the direction. Returns true when a value changed. */
-static bool perf_change(WfgOptions *o, int h) {
+static bool perf_change(TremuOptions *o, int h) {
     if (perf_line == PERF_LINE_SCOPE) {
         if (perf_game[0]) perf_for_game = !perf_for_game;
         dirty = true;
         return false;
     }
     if (perf_line < PERF_LINE_PROFILE || perf_line > PERF_LINE_RES) return false;
-    WfgPerf *p = perf_for_game ? wfg_options_perf_own(o, perf_game) : &o->perf;
+    TremuPerf *p = perf_for_game ? tremu_options_perf_own(o, perf_game) : &o->perf;
     if (!p) return false;
     if (perf_line == PERF_LINE_PROFILE) {
-        int profile = (p->profile + h + WFG_PERF_PROFILES) % WFG_PERF_PROFILES;
+        int profile = (p->profile + h + TREMU_PERF_PROFILES) % TREMU_PERF_PROFILES;
         /* The custom profile starts from what was in use. */
-        if (profile == WFG_PERF_CUSTOM) wfg_perf_resolve(p, perf_system, p);
+        if (profile == TREMU_PERF_CUSTOM) tremu_perf_resolve(p, perf_system, p);
         p->profile = profile;
         return true;
     }
-    if (p->profile != WFG_PERF_CUSTOM) {
-        wfg_perf_resolve(p, perf_system, p);
-        p->profile = WFG_PERF_CUSTOM;
+    if (p->profile != TREMU_PERF_CUSTOM) {
+        tremu_perf_resolve(p, perf_system, p);
+        p->profile = TREMU_PERF_CUSTOM;
     }
-    if (perf_line == PERF_LINE_CPU) p->cpu = (p->cpu + h + WFG_PERF_LEVELS) % WFG_PERF_LEVELS;
-    if (perf_line == PERF_LINE_GPU) p->gpu = (p->gpu + h + WFG_PERF_LEVELS) % WFG_PERF_LEVELS;
-    if (perf_line == PERF_LINE_REFRESH) p->refresh = wfg_perf_next_refresh(p->refresh, h);
+    if (perf_line == PERF_LINE_CPU) p->cpu = (p->cpu + h + TREMU_PERF_LEVELS) % TREMU_PERF_LEVELS;
+    if (perf_line == PERF_LINE_GPU) p->gpu = (p->gpu + h + TREMU_PERF_LEVELS) % TREMU_PERF_LEVELS;
+    if (perf_line == PERF_LINE_REFRESH) p->refresh = tremu_perf_next_refresh(p->refresh, h);
     if (perf_line == PERF_LINE_SHARPEN) p->sharpen = (p->sharpen + h + 3) % 3;
     if (perf_line == PERF_LINE_RES) p->res = (p->res + h + 4) % 4;
     return true;
@@ -205,26 +205,26 @@ static uint64_t vertical_next, horizontal_next;
 static bool confirm_was;
 static uint32_t pixels[MENU_WIDTH * MENU_HEIGHT];
 
-void wfg_menu_init(JavaVM *vm, jobject activity) {
+void tremu_menu_init(JavaVM *vm, jobject activity) {
     jvm = vm;
     activity_ref = activity;
 }
 
-void wfg_menu_closed(void) {
+void tremu_menu_closed(void) {
     /* Closed during learning: give up and keep the previous buttons. */
-    if (learn_shown) while (wfg_ext_learning()) wfg_ext_learn_skip();
+    if (learn_shown) while (tremu_ext_learning()) tremu_ext_learn_skip();
     learn_shown = false;
 }
 
-void wfg_menu_reset(void) {
+void tremu_menu_reset(void) {
     selected = 0;
     code_mode = false;
     text_mode = false;
     pad_mode = false;
     perf_mode = false;
-    if (learn_shown && wfg_ext_learning()) {
+    if (learn_shown && tremu_ext_learning()) {
         /* The menu closed during learning: give up and keep the previous buttons. */
-        while (wfg_ext_learning()) wfg_ext_learn_skip();
+        while (tremu_ext_learning()) tremu_ext_learn_skip();
     }
     learn_shown = false;
     multi_pick = multi_current;
@@ -242,16 +242,16 @@ static int repeat(float value, int *dir, uint64_t *next, uint64_t now) {
     return 0;
 }
 
-MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t now, WfgOptions *o, bool *changed) {
+MenuAction tremu_menu_input(float stick_x, float stick_y, bool confirm, uint64_t now, TremuOptions *o, bool *changed) {
     *changed = false;
-    if (wfg_ext_learning() || learn_shown) {
-        /* Learning a gun's buttons: presses arrive through wfg_ext_input; stick right skips one. */
+    if (tremu_ext_learning() || learn_shown) {
+        /* Learning a gun's buttons: presses arrive through tremu_ext_input; stick right skips one. */
         int h = repeat(stick_x, &horizontal_dir, &horizontal_next, now);
-        if (h > 0) wfg_ext_learn_skip();
+        if (h > 0) tremu_ext_learn_skip();
         char signal[48];
-        if ((int)wfg_ext_learn_role() != learn_drawn || wfg_ext_last_signal(signal, sizeof signal) != signal_drawn) dirty = true;
+        if ((int)tremu_ext_learn_role() != learn_drawn || tremu_ext_last_signal(signal, sizeof signal) != signal_drawn) dirty = true;
         confirm_was = confirm;
-        if (wfg_ext_learning()) return MENU_NONE;
+        if (tremu_ext_learning()) return MENU_NONE;
         learn_shown = false;
         dirty = true;
         return MENU_EXT_LEARNED;
@@ -262,14 +262,14 @@ MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t n
         bool pressed = confirm && !confirm_was;
         confirm_was = confirm;
         if (v) pad_line = (pad_line - v + PAD_LINES) % PAD_LINES;
-        if (h && pad_line == PAD_LINE_CONSOLE) pad_console = (pad_console + h + WFG_PAD_CONSOLES) % WFG_PAD_CONSOLES;
+        if (h && pad_line == PAD_LINE_CONSOLE) pad_console = (pad_console + h + TREMU_PAD_CONSOLES) % TREMU_PAD_CONSOLES;
         if ((h || pressed) && pad_line >= PAD_LINE_FIRST_INPUT && pad_line < PAD_LINE_RESET) {
             int input = pad_line - PAD_LINE_FIRST_INPUT, *target = &o->pad_map[pad_console][input];
-            *target = wfg_pad_target_next((WfgPadConsole)pad_console, (WfgTouchInput)input, *target, h ? h : 1);
+            *target = tremu_pad_target_next((TremuPadConsole)pad_console, (TremuTouchInput)input, *target, h ? h : 1);
             *changed = true;
         }
         if (pressed && pad_line == PAD_LINE_RESET) {
-            wfg_padmap_defaults((WfgPadConsole)pad_console, o->pad_map[pad_console]);
+            tremu_padmap_defaults((TremuPadConsole)pad_console, o->pad_map[pad_console]);
             *changed = true;
         }
         if (pressed && pad_line == PAD_LINE_BACK) pad_mode = false;
@@ -284,8 +284,8 @@ MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t n
         if (v) perf_line = (perf_line - v + PERF_LINES) % PERF_LINES;
         if ((h || pressed) && perf_change(o, h ? h : 1)) *changed = true;
         if (pressed && perf_line == PERF_LINE_RESET) {
-            if (perf_for_game) wfg_options_perf_forget(o, perf_game);
-            else o->perf = (WfgPerf){0};
+            if (perf_for_game) tremu_options_perf_forget(o, perf_game);
+            else o->perf = (TremuPerf){0};
             *changed = true;
         }
         if (pressed && perf_line == PERF_LINE_BACK) perf_mode = false;
@@ -320,7 +320,7 @@ MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t n
         int v = repeat(stick_y, &vertical_dir, &vertical_next, now);
         int h = repeat(stick_x, &horizontal_dir, &horizontal_next, now);
         if (v) code_digits[code_cursor] = (code_digits[code_cursor] + v + 32) % 32;
-        if (h) code_cursor = (code_cursor + h + WFG_CODE_LENGTH) % WFG_CODE_LENGTH;
+        if (h) code_cursor = (code_cursor + h + TREMU_CODE_LENGTH) % TREMU_CODE_LENGTH;
         if (v || h) dirty = true;
         bool pressed = confirm && !confirm_was;
         confirm_was = confirm;
@@ -363,10 +363,10 @@ MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t n
         o->background = (o->background + h + 3) % 3;
         *changed = dirty = true;
     } else if (h && selected == ITEM_X360_DRIVER) {
-        o->x360_driver = (o->x360_driver + h + WG_DRIVER_COUNT) % WG_DRIVER_COUNT;
+        o->x360_driver = (o->x360_driver + h + TREMU_DRIVER_COUNT) % TREMU_DRIVER_COUNT;
         *changed = dirty = true;
     } else if (h && selected == ITEM_LANGUAGE) {
-        o->language = ((int)wfg_lang() + h + LANG_COUNT) % LANG_COUNT;
+        o->language = ((int)tremu_lang() + h + LANG_COUNT) % LANG_COUNT;
         *changed = dirty = true;
         return MENU_LANGUAGE;
     }
@@ -380,9 +380,9 @@ MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t n
     if (selected == ITEM_AI_DEPTH) { o->ai_depth = !o->ai_depth; *changed = dirty = true; }
     if (selected == ITEM_LOCAL_P2) { o->local_p2 = !o->local_p2; *changed = dirty = true; }
     if (selected == ITEM_BACKGROUND) { o->background = (o->background + 1) % 3; *changed = dirty = true; }
-    if (selected == ITEM_X360_DRIVER) { o->x360_driver = (o->x360_driver + 1) % WG_DRIVER_COUNT; *changed = dirty = true; }
+    if (selected == ITEM_X360_DRIVER) { o->x360_driver = (o->x360_driver + 1) % TREMU_DRIVER_COUNT; *changed = dirty = true; }
     if (selected == ITEM_LANGUAGE) {
-        o->language = ((int)wfg_lang() + 1) % LANG_COUNT;
+        o->language = ((int)tremu_lang() + 1) % LANG_COUNT;
         *changed = dirty = true;
         return MENU_LANGUAGE;
     }
@@ -395,12 +395,12 @@ MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t n
     if (selected == ITEM_PERF) {
         perf_mode = true;
         perf_line = PERF_LINE_PROFILE;
-        perf_for_game = perf_game[0] && wfg_options_perf_has_own(o, perf_game);
+        perf_for_game = perf_game[0] && tremu_options_perf_has_own(o, perf_game);
         dirty = true;
         return MENU_NONE;
     }
     if (selected == ITEM_EXT) {
-        wfg_ext_learn_start();
+        tremu_ext_learn_start();
         learn_shown = true;
         learn_drawn = -1;
         dirty = true;
@@ -415,7 +415,7 @@ MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t n
     return MENU_NONE;
 }
 
-const uint32_t *wfg_menu_render(const WfgOptions *o, bool gun_connected, const char *net_status) {
+const uint32_t *tremu_menu_render(const TremuOptions *o, bool gun_connected, const char *net_status) {
     if (gun_connected != last_gun) { last_gun = gun_connected; dirty = true; }
     if (strcmp(net_status, last_net_status)) {
         snprintf(last_net_status, sizeof last_net_status, "%s", net_status);
@@ -431,28 +431,28 @@ const uint32_t *wfg_menu_render(const WfgOptions *o, bool gun_connected, const c
     int highlighted = selected + 1;
     if (learn_shown) {
         for (int i = 0; i < ITEM_COUNT + 2; i++) text[i][0] = 0;
-        int role = wfg_ext_learn_role();
+        int role = tremu_ext_learn_role();
         learn_drawn = role;
         snprintf(text[0], sizeof text[0], "%s", T("Arme Bluetooth / USB"));
         snprintf(text[2], sizeof text[0], "%s", T("Connecte d'abord ton arme dans les param\xC3\xA8tres Bluetooth du Quest."));
         if (role < EXT_ROLES) {
-            snprintf(text[4], sizeof text[0], T("Appuie sur %s de ton arme"), T(wfg_ext_role_name((ExtRole)role)));
+            snprintf(text[4], sizeof text[0], T("Appuie sur %s de ton arme"), T(tremu_ext_role_name((ExtRole)role)));
             snprintf(text[5], sizeof text[0], T("Bouton %d sur %d"), role + 1, EXT_ROLES);
         }
         char signal[48];
-        signal_drawn = wfg_ext_last_signal(signal, sizeof signal);
+        signal_drawn = tremu_ext_last_signal(signal, sizeof signal);
         snprintf(text[7], sizeof text[0], T("Dernier signal de l'arme : %s"), signal);
         snprintf(text[9], sizeof text[0], "%s", T("Stick Touch vers la droite : passer (r\xC3\xA9glage par d\xC3\xA9" "faut)"));
         snprintf(text[10], sizeof text[0], "%s", T("Menu : annuler"));
         highlighted = 4;
     } else if (pad_mode) {
         for (int i = 0; i < ITEM_COUNT + 2; i++) text[i][0] = 0;
-        WfgPadConsole console = (WfgPadConsole)pad_console;
+        TremuPadConsole console = (TremuPadConsole)pad_console;
         snprintf(text[0], sizeof text[0], "%s", T("Contr\xC3\xB4les des consoles"));
-        snprintf(text[1 + PAD_LINE_CONSOLE], sizeof text[0], "%s\t< %s >", T("Console"), wfg_pad_console_name(console));
+        snprintf(text[1 + PAD_LINE_CONSOLE], sizeof text[0], "%s\t< %s >", T("Console"), tremu_pad_console_name(console));
         for (int i = 0; i < TI_COUNT; i++)
-            snprintf(text[1 + PAD_LINE_FIRST_INPUT + i], sizeof text[0], "%s\t%s", T(wfg_touch_input_name((WfgTouchInput)i)),
-                     T(wfg_pad_target_name(console, o->pad_map[console][i])));
+            snprintf(text[1 + PAD_LINE_FIRST_INPUT + i], sizeof text[0], "%s\t%s", T(tremu_touch_input_name((TremuTouchInput)i)),
+                     T(tremu_pad_target_name(console, o->pad_map[console][i])));
         snprintf(text[1 + PAD_LINE_RESET], sizeof text[0], "%s", T("R\xC3\xA9initialiser cette console"));
         snprintf(text[1 + PAD_LINE_BACK], sizeof text[0], "%s", T("Retour"));
         snprintf(text[ITEM_COUNT + 1], sizeof text[0], "%s",
@@ -460,9 +460,9 @@ const uint32_t *wfg_menu_render(const WfgOptions *o, bool gun_connected, const c
         highlighted = 1 + pad_line;
     } else if (perf_mode) {
         for (int i = 0; i < ITEM_COUNT + 2; i++) text[i][0] = 0;
-        const WfgPerf *stored = perf_for_game ? wfg_options_perf(o, perf_game) : &o->perf;
-        WfgPerf p;
-        wfg_perf_resolve(stored, perf_system, &p);
+        const TremuPerf *stored = perf_for_game ? tremu_options_perf(o, perf_game) : &o->perf;
+        TremuPerf p;
+        tremu_perf_resolve(stored, perf_system, &p);
         snprintf(text[0], sizeof text[0], "%s", T("Optimisation"));
         snprintf(text[1 + PERF_LINE_SCOPE], sizeof text[0], "%s\t< %s >", T("R\xC3\xA9glages pour"), perf_for_game ? perf_title : T("Tous les jeux"));
         snprintf(text[1 + PERF_LINE_PROFILE], sizeof text[0], "%s\t< %s >", T("Profil"), perf_profile_name(stored->profile));
@@ -476,7 +476,7 @@ const uint32_t *wfg_menu_render(const WfgOptions *o, bool gun_connected, const c
         else snprintf(text[1 + PERF_LINE_RES], sizeof text[0], "%s\t%s", T("R\xC3\xA9solution interne (prochain lancement)"), T("par d\xC3\xA9" "faut"));
         snprintf(text[1 + PERF_LINE_RESET], sizeof text[0], "%s", T(perf_for_game ? "Revenir aux r\xC3\xA9glages g\xC3\xA9n\xC3\xA9raux" : "R\xC3\xA9initialiser"));
         snprintf(text[1 + PERF_LINE_BACK], sizeof text[0], "%s", T("Retour"));
-        wfg_perf_status(perf_speed_drawn, sizeof perf_speed_drawn, perf_system_drawn, sizeof perf_system_drawn);
+        tremu_perf_status(perf_speed_drawn, sizeof perf_speed_drawn, perf_system_drawn, sizeof perf_system_drawn);
         snprintf(text[1 + PERF_LINES + 1], sizeof text[0], "%s", perf_speed_drawn);
         snprintf(text[1 + PERF_LINES + 2], sizeof text[0], "%s", perf_system_drawn);
         snprintf(text[1 + PERF_LINES + 4], sizeof text[0], "%s", T("Maximum : plus de chaleur, batterie plus courte."));
@@ -505,10 +505,10 @@ const uint32_t *wfg_menu_render(const WfgOptions *o, bool gun_connected, const c
         snprintf(text[0], sizeof text[0], "%s", T("Rejoindre par code"));
         snprintf(text[2], sizeof text[0], "%s", T("Code de la partie (donn\xC3\xA9 par l'h\xC3\xB4te) :"));
         char *c = text[4];
-        for (int i = 0; i < WFG_CODE_LENGTH; i++) {
+        for (int i = 0; i < TREMU_CODE_LENGTH; i++) {
             if (i == 5) { *c++ = '-'; *c++ = ' '; }
             if (i == code_cursor) *c++ = '[';
-            *c++ = WFG_CODE_ALPHABET[code_digits[i]];
+            *c++ = TREMU_CODE_ALPHABET[code_digits[i]];
             if (i == code_cursor) *c++ = ']';
             *c++ = ' ';
         }
@@ -527,24 +527,24 @@ const uint32_t *wfg_menu_render(const WfgOptions *o, bool gun_connected, const c
             snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label), T("d\xC3\xA9sactiv\xC3\xA9" "e"));
         else if (it->field)
             snprintf(text[i + 1], sizeof text[0], it->min < 0 ? "%s\t%+d%s" : "%s\t%d%s", T(it->label),
-                     *it->field((WfgOptions *)o), it->unit);
+                     *it->field((TremuOptions *)o), it->unit);
         else if (i == ITEM_MULTI)
             snprintf(text[i + 1], sizeof text[0], "%s\t%s%s", T(it->label), multi_count ? multi[multi_pick] : "",
                      multi_pick != multi_current ? T("  (A : valider)") : "");
         else if (i == ITEM_PADS)
             snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label), "NES, SNES, N64, PS, MD, SAT, DC, GC, Wii, 360");
         else if (i == ITEM_PERF)
-            snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label), perf_profile_name(wfg_options_perf(o, perf_game)->profile));
+            snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label), perf_profile_name(tremu_options_perf(o, perf_game)->profile));
         else if (i == ITEM_BACKGROUND)
             snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label),
                      T(o->background == 1 ? "pi\xC3\xA8" "ce r\xC3\xA9" "elle" : o->background == 2 ? "pi\xC3\xA8" "ce assombrie" : "noir"));
         else if (i == ITEM_X360_DRIVER)
             snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label),
-                     o->x360_driver == WG_DRIVER_SYSTEM ? T("Adreno (syst\xC3\xA8me)") : "Turnip");
+                     o->x360_driver == TREMU_DRIVER_SYSTEM ? T("Adreno (syst\xC3\xA8me)") : "Turnip");
         else if (i == ITEM_LANGUAGE)
             /* Also named in English, for whoever opens the menu in a language they cannot read. */
-            snprintf(text[i + 1], sizeof text[0], "%s%s\t%s", T(it->label), wfg_lang() == LANG_EN ? "" : " / Language",
-                     wfg_lang_name(wfg_lang()));
+            snprintf(text[i + 1], sizeof text[0], "%s%s\t%s", T(it->label), tremu_lang() == LANG_EN ? "" : " / Language",
+                     tremu_lang_name(tremu_lang()));
         else if (i == ITEM_LOCAL_P2)
             snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label), o->local_p2 ? T("activ\xC3\xA9") : T("d\xC3\xA9sactiv\xC3\xA9"));
         else if (i == ITEM_EXT)
@@ -570,7 +570,7 @@ const uint32_t *wfg_menu_render(const WfgOptions *o, bool gun_connected, const c
     jclass string_class = (*env)->FindClass(env, "java/lang/String");
     jobjectArray lines = (*env)->NewObjectArray(env, ITEM_COUNT + 2, string_class, NULL);
     for (int i = 0; i < ITEM_COUNT + 2; i++) {
-        wfg_utf8_trim(text[i]);
+        tremu_utf8_trim(text[i]);
         jstring s = (*env)->NewStringUTF(env, text[i]);
         (*env)->SetObjectArrayElement(env, lines, i, s);
         (*env)->DeleteLocalRef(env, s);

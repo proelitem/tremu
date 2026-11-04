@@ -14,7 +14,7 @@ cd /g/ms
 sed -i '/--gcc=android-arm64.*--osd=retro/s/ --NOASM=1//' makefile
 SOURCES_ARG=()
 if [ -n "$1" ]; then
-    SOURCES_ARG=(SUBTARGET=wfg "SOURCES=$1")
+    SOURCES_ARG=(SUBTARGET=tremu "SOURCES=$1")
 else
     SOURCES_ARG=(SUBTARGET=arcade)
 fi

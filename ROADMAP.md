@@ -23,7 +23,7 @@ fichiers système (BIOS Xbox, clés Wii U) restent fournis par le joueur.
 PS3 suit le même schéma que Wii U : pas de cœur, une tuile par jeu, lancée dans l'appli ARMSX3
 (fork d'ARMSX3 : branche `quest3/touch-input`, `applicationId` `com.armsx3`, écran virtuel OpenXR et
 Touch). `Ps3Library.java` liste `Download/Roms/ps3` : un `.iso`, ou un dossier contenant
-`PS3_GAME/PARAM.SFO` (titre et identifiant lus dans ce fichier). `WfgActivity.launchPs3()` envoie un
+`PS3_GAME/PARAM.SFO` (titre et identifiant lus dans ce fichier). `TremuActivity.launchPs3()` envoie un
 `ACTION_VIEW` à `com.armsx2.Main` avec l'extra `path`, comme le ferait un frontend (ES-DE,
 Daijisho) : ARMSX3 démarre le dossier ou l'image tels quels.
 
@@ -36,7 +36,7 @@ listés : ARMSX3 les installe d'abord.
 
 **PSP (intégrée).** Notre PPSSPP (`tools/build_ppsspp.py`), jeux dans `Download/Roms/psp` (`.iso`, `.cso`, `.chd`, `EBOOT.PBP`), Touch réglables dans « Contrôles des consoles ». Le multijoueur passe par le mode ad hoc du jeu : chaque casque lance le serveur ad hoc intégré de PPSSPP, « Héberger » annonce la partie, et « Rejoindre » redémarre le jeu sur le serveur de l'hôte. Aucun serveur payant. Sur Internet, le code de partie envoie les invités sur le relais de l'hôte (ports TCP 27312 et 27313, ouverts par UPnP).
 
-**PS Vita (intégrée, à essayer dans le casque).** Notre Vita3K (GPL-2.0, `_src/vita3k`, `_tools/vita3k_build.ps1`, vcpkg dédié `_src/vcpkg-vita`) est une appli à part, en OpenXR (`vita3k/android/jni/native_xr.cpp`). Une tuile par `.vpk` ou `.zip` de `Download/Roms/vita` ; `WfgLaunchActivity` installe au premier lancement les `.PUP` trouvés dans ce dossier, puis le jeu. Touch réglables dans « Contrôles des consoles », doigt sur l'écran avant ou arrière là où pointe la manette droite. Son ad hoc n'a pas de serveur : il passe par la diffusion sur le réseau local, donc même Wi-Fi ; compatibilité par jeu (Vita3K/Vita3K#3686). Sur Internet, il faudrait un VPN (ZeroTier, Tailscale). Le joueur fournit le firmware et ses jeux.
+**PS Vita (intégrée, à essayer dans le casque).** Notre Vita3K (GPL-2.0, `_src/vita3k`, `_tools/vita3k_build.ps1`, vcpkg dédié `_src/vcpkg-vita`) est une appli à part, en OpenXR (`vita3k/android/jni/native_xr.cpp`). Une tuile par `.vpk` ou `.zip` de `Download/Roms/vita` ; `WfgLaunchActivity` installe au premier lancement les `.PUP` trouvés dans ce dossier, puis le jeu. Touch réglables dans « Contrôles des consoles », doigt sur l'écran avant ou arrière là où pointe la manette droite. Son ad hoc n'a pas de serveur : il passe par la diffusion sur le réseau local, donc même Wi-Fi ; compatibilité par jeu (Vita3K/Vita3K#3686). Sur Internet, il faudrait un VPN (ZeroTier, Tailscale). Pilote par défaut : notre Turnip, sans lequel Killzone Mercenary perd l'arme et les personnages et plante ; le jeu reste lent sur Quest 3, et Vita3K coupe alors son mode mémoire (cause à trouver). Le joueur fournit le firmware et ses jeux.
 
 ## À étudier : mods VR comme moteur pour d'autres jeux
 

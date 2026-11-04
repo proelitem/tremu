@@ -1,0 +1,190 @@
+diff --git a/Source/ui_libretro/PH_Libretro_Input.cpp b/Source/ui_libretro/PH_Libretro_Input.cpp
+index 3f9a1ea..1814b39 100644
+--- a/Source/ui_libretro/PH_Libretro_Input.cpp
++++ b/Source/ui_libretro/PH_Libretro_Input.cpp
+@@ -1,5 +1,9 @@
+ #include "PH_Libretro_Input.h"
+ #include "ext/libretro.h"
++#include "PS2VM.h"
++
++extern CPS2VM* g_tremu_virtual_machine;
++extern int g_tremu_trigger, g_tremu_pedal;
+ 
+ extern bool libretro_supports_bitmasks;
+ extern retro_input_poll_t g_input_poll_cb;
+@@ -25,6 +29,20 @@ void CPH_Libretro_Input::UpdateInputState()
+ 		}
+ 	}
+ 
++	// Tremu: the light gun (screen position, trigger, pedal) for the arcade gun games.
++	if(g_tremu_virtual_machine && g_tremu_trigger >= 0)
++	{
++		int x = g_input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X);
++		int y = g_input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y);
++		if(!g_input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN))
++			g_tremu_virtual_machine->ReportGunPosition((x + 0x8000) / 65536.f, (y + 0x8000) / 65536.f);
++		if(g_input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_TRIGGER))
++			m_btns_state |= 1 << g_tremu_trigger;
++		if(g_tremu_pedal >= 0 && (g_input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_A) ||
++		                           g_input_state_cb(0, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_RELOAD)))
++			m_btns_state |= 1 << g_tremu_pedal;
++	}
++
+ 	for(unsigned int i = 0; i <= PS2::CControllerInfo::ANALOG_RIGHT_Y + 1; i++)
+ 	{
+ 		auto currentButtonId = static_cast<PS2::CControllerInfo::BUTTON>(i);
+diff --git a/Source/ui_libretro/main_libretro.cpp b/Source/ui_libretro/main_libretro.cpp
+index 8a07c26..d1b92e6 100644
+--- a/Source/ui_libretro/main_libretro.cpp
++++ b/Source/ui_libretro/main_libretro.cpp
+@@ -4,6 +4,7 @@
+ #include "AppConfig.h"
+ #include "PS2VM.h"
+ #include "ui_shared/BootableUtils.h"
++#include "ui_shared/ArcadeUtils.h"
+ 
+ #include "PS2VM_Preferences.h"
+ #include "GSH_OpenGL_Libretro.h"
+@@ -23,6 +24,11 @@
+ #define LOG_NAME "LIBRETRO"
+ 
+ static CPS2VM* m_virtualMachine = nullptr;
++CPS2VM* g_tremu_virtual_machine = nullptr;  // for the light gun (PH_Libretro_Input.cpp)
++// Pad buttons (libretro ids) that the arcade definition maps to the gun's trigger and pedal; -1 off.
++int g_tremu_trigger = -1, g_tremu_pedal = -1;
++// The arcade board could not start: retro_run returns at once instead of waiting for frames.
++static bool g_tremu_boot_failed = false;
+ static bool first_run = false;
+ 
+ bool libretro_supports_bitmasks = false;
+@@ -52,7 +58,8 @@ static std::vector<struct retro_variable> m_vars =
+ enum class BootType
+ {
+ 	CD,
+-	ELF
++	ELF,
++	ARCADE  // Tremu: Namco System 246/256 set, path = its .arcadedef
+ };
+ 
+ struct LastOpenCommand
+@@ -423,12 +430,34 @@ void retro_run()
+ 	// CLog::GetInstance().Print(LOG_NAME, "%s\n", __FUNCTION__);
+ 
+ 	checkVarsUpdates();
++	if(g_tremu_boot_failed)
++		return;
+ 
+ 	if(!first_run)
+ 	{
+ 		if(m_virtualMachine)
+ 		{
+ 			// m_virtualMachine->Pause();
++			if(m_bootCommand.type == BootType::ARCADE)
++			{
++				static bool registered = false;
++				if(!registered)
++				{
++					ArcadeUtils::RegisterArcadeMachines();
++					registered = true;
++				}
++				try
++				{
++					ArcadeUtils::BootArcadeMachine(m_virtualMachine, m_bootCommand.path);  // resets and resumes
++				}
++				catch(const std::exception& e)
++				{
++					CLog::GetInstance().Print(LOG_NAME, "Arcade boot failed: %s\n", e.what());
++					g_tremu_boot_failed = true;
++				}
++				first_run = true;
++				return;
++			}
+ 			m_virtualMachine->Reset();
+ 			if(m_bootCommand.type == BootType::CD)
+ 			{
+@@ -493,7 +522,40 @@ bool retro_load_game(const retro_game_info* info)
+ #endif
+ 
+ 	fs::path filePath = info->path;
+-	if(BootableUtils::IsBootableExecutablePath(filePath))
++	// Tremu: an arcade set "<roms>/timecrs3.zip" (dongle) with "<roms>/timecrs3/<disc>.chd",
++	// described by "<system>/play/arcadedefs/timecrs3.arcadedef".
++	const char* systemDir = nullptr;
++	fs::path arcadeDef;
++	if(filePath.extension() == ".zip" && g_environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &systemDir) && systemDir)
++		arcadeDef = fs::path(systemDir) / "play" / "arcadedefs" / (filePath.stem().string() + ".arcadedef");
++	if(!arcadeDef.empty() && fs::exists(arcadeDef))
++	{
++		// The disc image sits in a folder named after the set (or its parent set): refuse early
++		// when it is missing, the arcade board would otherwise wait forever for its disc.
++		bool hasDisc = false;
++		for(auto folder : {filePath.stem().string(), filePath.stem().string().substr(0, 8)})
++		{
++			std::error_code error;
++			fs::path dir = filePath.parent_path() / folder;
++			if(fs::is_directory(dir, error))
++				for(auto& entry : fs::directory_iterator(dir, error))
++					hasDisc = hasDisc || entry.path().extension() == ".chd";
++		}
++		if(!hasDisc)
++		{
++			CLog::GetInstance().Print(LOG_NAME, "No disc image (.chd) next to %s\n", filePath.string().c_str());
++			return false;
++		}
++		m_bootCommand = LastOpenCommand(BootType::ARCADE, arcadeDef);
++		// JVS button 1 (trigger) is triangle by default; Time Crisis 3 moves it to R2 and its pedal
++		// to triangle, Time Crisis 4 and Cobra put the pedal on circle.
++		auto id = filePath.stem().string();
++		g_tremu_trigger = id.rfind("timecrs3", 0) == 0 ? RETRO_DEVICE_ID_JOYPAD_R2 : RETRO_DEVICE_ID_JOYPAD_X;
++		g_tremu_pedal = id.rfind("timecrs3", 0) == 0 ? RETRO_DEVICE_ID_JOYPAD_X
++		               : (id.rfind("timecrs4", 0) == 0 || id == "cobrata") ? RETRO_DEVICE_ID_JOYPAD_A : -1;
++		CAppConfig::GetInstance().SetPreferencePath(PREF_PS2_ARCADEROMS_DIRECTORY, filePath.parent_path());
++	}
++	else if(BootableUtils::IsBootableExecutablePath(filePath))
+ 	{
+ 		m_bootCommand = LastOpenCommand(BootType::ELF, filePath);
+ 	}
+@@ -558,6 +620,7 @@ void retro_init()
+ 
+ 	m_virtualMachine = new CPS2VM();
+ 	m_virtualMachine->Initialize();
++	g_tremu_virtual_machine = m_virtualMachine;
+ 
+ 	//Disable frame limiter, RetroArch handles this on its own
+ 	CAppConfig::GetInstance().SetPreferenceBoolean(PREF_PS2_LIMIT_FRAMERATE, false);
+@@ -592,6 +655,7 @@ void retro_deinit()
+ 		m_virtualMachine->Destroy();
+ 		delete m_virtualMachine;
+ 		m_virtualMachine = nullptr;
++		g_tremu_virtual_machine = nullptr;
+ 	}
+ 	libretro_supports_bitmasks = false;
+ }
+diff --git a/Source/ui_shared/ArcadeUtils.cpp b/Source/ui_shared/ArcadeUtils.cpp
+index 9ab3f8b..93f01d3 100644
+--- a/Source/ui_shared/ArcadeUtils.cpp
++++ b/Source/ui_shared/ArcadeUtils.cpp
+@@ -333,8 +333,9 @@ static CArcadeDriver* g_drivers[] =
+ 
+ void ArcadeUtils::BootArcadeMachine(CPS2VM* virtualMachine, const fs::path& arcadeDefFilename)
+ {
+-	auto arcadeDefsPath = Framework::PathUtils::GetAppResourcesPath() / "arcadedefs";
+-	auto def = ReadArcadeMachineDefinition(arcadeDefsPath / arcadeDefFilename);
++	auto arcadeDefsPath = arcadeDefFilename.is_absolute() ? arcadeDefFilename.parent_path()
++	                                                      : Framework::PathUtils::GetAppResourcesPath() / "arcadedefs";
++	auto def = ReadArcadeMachineDefinition(arcadeDefsPath / arcadeDefFilename.filename());
+ 	if(!def.parent.empty())
+ 	{
+ 		auto parentDefPath = arcadeDefsPath / (def.parent + ".arcadedef");
+diff --git a/deps/Framework b/deps/Framework
+--- a/deps/Framework
++++ b/deps/Framework
+@@ -1 +1 @@
+-Subproject commit 587f278917acc0026bf5fc34b39f995fc26bd015
++Subproject commit 587f278917acc0026bf5fc34b39f995fc26bd015-dirty
+diff --git a/deps/libchdr b/deps/libchdr
+--- a/deps/libchdr
++++ b/deps/libchdr
+@@ -1 +1 @@
+-Subproject commit 284e38b6e53e0a7270cc234934e45230ed915a25
++Subproject commit 284e38b6e53e0a7270cc234934e45230ed915a25-dirty
