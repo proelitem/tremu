@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "Tremu", __VA_ARGS__)
 
@@ -24,6 +25,35 @@ static int learn_role;
 static int learned[EXT_ROLES];
 static int last_code;
 static unsigned last_count;
+static int window_w, window_h;
+static float pointer_x, pointer_y;
+static uint64_t pointer_ns;
+
+static uint64_t now_ns(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
+}
+
+void wfg_ext_set_window(int width, int height) {
+    window_w = width;
+    window_h = height;
+}
+
+bool wfg_ext_pointer(float *u, float *v, uint64_t now) {
+    if (!pointer_ns || now - pointer_ns > 3000000000ull || window_w <= 0 || window_h <= 0) return false;
+    *u = pointer_x / (float)window_w;
+    *v = pointer_y / (float)window_h;
+    return true;
+}
+
+/* Where a mouse, touch or pen event puts the pointer; Android keeps the position for a relative
+ * mouse too, so this works as a cursor for any of them. */
+static void track_pointer(const AInputEvent *event) {
+    pointer_x = AMotionEvent_getX(event, 0);
+    pointer_y = AMotionEvent_getY(event, 0);
+    pointer_ns = now_ns();
+}
 
 /* Usual layouts: mouse-mode IR guns, gamepads (Arkade, GunCon adapters) and the MAME keys
  * (1 start, 5 coin) that Gun4IR/Samco/OpenFIRE send in keyboard mode. */
@@ -123,7 +153,22 @@ int32_t wfg_ext_input(const AInputEvent *event) {
         for (int b = 0; b < 31; b++)
             if (pressed & (1 << b)) press(MOUSE_BASE + b);
         mouse_buttons = buttons;
-        return 1;  /* the gun's own pointer is not used: the Touch aims */
+        track_pointer(event);  /* the Touch aims unless the "external pointer aims" option is on */
+        return 1;
+    }
+    if ((source & AINPUT_SOURCE_TOUCHSCREEN) == AINPUT_SOURCE_TOUCHSCREEN || (source & AINPUT_SOURCE_STYLUS) == AINPUT_SOURCE_STYLUS) {
+        /* An absolute pointing gun (Gun4IR in "absolute mouse" mode shows up as a touchscreen): a
+         * touch is the first mouse button, the position the pointer. The headset has no touchscreen
+         * of its own, so these can only come from such a device. */
+        int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
+        if (action == AMOTION_EVENT_ACTION_DOWN) {
+            if (!(mouse_buttons & 1)) press(MOUSE_BASE + 0);
+            mouse_buttons |= 1;
+        } else if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_CANCEL) {
+            mouse_buttons &= ~1;
+        }
+        track_pointer(event);
+        return 1;
     }
     if ((source & AINPUT_SOURCE_JOYSTICK) == AINPUT_SOURCE_JOYSTICK || (source & AINPUT_SOURCE_GAMEPAD) == AINPUT_SOURCE_GAMEPAD) {
         for (size_t i = 0; i < sizeof watched / sizeof watched[0]; i++) {

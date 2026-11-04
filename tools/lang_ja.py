@@ -35,6 +35,7 @@ JA = {
     "Relief IA (jeux sans couches)": "AI立体化（レイヤーなしのゲーム）",
     "Stéréoscopie (PS2, N64, X360)": "立体視 (PS2, N64, X360)",
     "Arme Bluetooth / USB": "Bluetooth / USB ガン",
+    "Visée par le pointeur externe": "外部ポインターで照準",
     "Joueur 2 (Touch gauche)": "プレイヤー2（左Touch）",
     "Multijoueur": "マルチプレイ",
     "Sauvegarde rapide": "クイックセーブ",

@@ -6,6 +6,7 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 #include <android/log.h>
+#include <android/native_window.h>
 #include <android_native_app_glue.h>
 #include <dirent.h>
 #include <jni.h>
@@ -1367,6 +1368,17 @@ static void read_input(XrTime time, float aspect, WgGun guns[WG_PLAYERS]) {
     if (atomic_load(&emu_state) != 1) return;
 
     aim(time, aspect, RIGHT, &g);
+    float pu, pv;
+    if (options.ext_aim && wfg_ext_pointer(&pu, &pv, now)) {
+        /* A Wii Remote through a DolphinBar (mouse modes) or a mouse-type gun: its pointer over
+         * the window is the aim, the bar standing under the virtual screen. Off the window is
+         * off the screen. Without a recent pointer event the Touch ray stays the aim. */
+        g.offscreen = pu < 0 || pu > 1 || pv < 0 || pv > 1;
+        if (!g.offscreen) {
+            g.x = (int16_t)lroundf((pu * 2 - 1) * 0x7fff);
+            g.y = (int16_t)lroundf((pv * 2 - 1) * 0x7fff);
+        }
+    }
     g.trigger = trigger;
     int layout = atomic_load(&pad_layout);
     if (layout != PAD_NONE) {
@@ -1445,7 +1457,8 @@ static int32_t on_input(struct android_app *app, AInputEvent *event) {
 }
 
 static void on_cmd(struct android_app *app, int32_t cmd) {
-    (void)app;
+    if ((cmd == APP_CMD_INIT_WINDOW || cmd == APP_CMD_WINDOW_RESIZED) && app->window)
+        wfg_ext_set_window(ANativeWindow_getWidth(app->window), ANativeWindow_getHeight(app->window));
     if (cmd == APP_CMD_RESUME) {
         resumed = true;
         /* Releases a gun's or pad's key or button whose "up" went to another app while we were away. */

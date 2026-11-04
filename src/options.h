@@ -41,6 +41,7 @@ typedef struct WfgOptions {
     bool voxels;          /* games that report layers (NES, Operation Wolf) in 3D voxels */
     int stereo;           /* PS2: one picture per eye from the game's depth, in percent; 0 flat */
     bool local_p2;        /* player 2 on the left Touch controller (same headset) */
+    bool ext_aim;         /* the external pointer (Wii Remote via DolphinBar, mouse gun) aims for player 1 */
     int language;         /* WfgLang, -1 follows the headset language */
     int background;       /* WFG_BACKGROUND_*: black, the room, the dimmed room (passthrough) */
     int x360_driver;      /* Xbox 360 Vulkan driver, WG_DRIVER_* (core.h); used when Xenia starts */

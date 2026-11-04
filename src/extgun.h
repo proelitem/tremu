@@ -22,6 +22,14 @@ void wfg_ext_release_all(void);
 /* The gun's joystick or hat, -1..1 (y up positive), for the carousel and the menu. */
 void wfg_ext_stick(float *x, float *y);
 
+/* The external pointer: a Wii Remote through a DolphinBar in its mouse modes (the IR pointer,
+ * the bar set under the virtual screen), a Gun4IR/Samco/OpenFIRE in mouse mode, any mouse. Its
+ * position over the app window, 0..1 from the top-left (outside that range: off the window), and
+ * whether it has moved in the last three seconds. The "external pointer aims" option makes it
+ * player 1's aim in place of the Touch controller's ray. The window size comes from the glue. */
+void wfg_ext_set_window(int width, int height);
+bool wfg_ext_pointer(float *u, float *v, uint64_t now_ns);
+
 /* Learning: the next press or axis push is assigned to the current role, then the next one is asked. */
 void wfg_ext_learn_start(void);
 void wfg_ext_learn_skip(void);

@@ -25,7 +25,7 @@ static int *screen_width(WfgOptions *o) { return &o->screen_width; }
 static int *screen_height(WfgOptions *o) { return &o->screen_height; }
 static int *stereo(WfgOptions *o) { return &o->stereo; }
 
-enum { ITEM_BACK = 0, ITEM_CROSSHAIR = 7, ITEM_VIBRATION, ITEM_VOXELS, ITEM_AI_DEPTH, ITEM_STEREO, ITEM_EXT, ITEM_PADS, ITEM_PERF, ITEM_LOCAL_P2, ITEM_MULTI, ITEM_SAVE, ITEM_LOAD, ITEM_RECENTER, ITEM_BACKGROUND, ITEM_X360_DRIVER, ITEM_LANGUAGE, ITEM_RESUME, ITEM_QUIT, ITEM_COUNT };
+enum { ITEM_BACK = 0, ITEM_CROSSHAIR = 7, ITEM_VIBRATION, ITEM_VOXELS, ITEM_AI_DEPTH, ITEM_STEREO, ITEM_EXT, ITEM_EXT_AIM, ITEM_PADS, ITEM_PERF, ITEM_LOCAL_P2, ITEM_MULTI, ITEM_SAVE, ITEM_LOAD, ITEM_RECENTER, ITEM_BACKGROUND, ITEM_X360_DRIVER, ITEM_LANGUAGE, ITEM_RESUME, ITEM_QUIT, ITEM_COUNT };
 static const Item items[ITEM_COUNT] = {
     {"Retour au carrousel", NULL, 0, 0, 0, NULL},
     {"Angle de l'arme", gun_pitch, -60, 60, 1, "\xC2\xB0"},
@@ -40,6 +40,7 @@ static const Item items[ITEM_COUNT] = {
     {"Relief IA (jeux sans couches)", NULL, 0, 0, 0, NULL},
     {"St\xC3\xA9r\xC3\xA9oscopie (PS2, N64, X360)", stereo, 0, 200, 25, " %"},
     {"Arme Bluetooth / USB", NULL, 0, 0, 0, NULL},
+    {"Vis\xC3\xA9" "e par le pointeur externe", NULL, 0, 0, 0, NULL},
     {"Contr\xC3\xB4les des consoles", NULL, 0, 0, 0, NULL},
     {"Optimisation", NULL, 0, 0, 0, NULL},
     {"Joueur 2 (Touch gauche)", NULL, 0, 0, 0, NULL},
@@ -356,6 +357,9 @@ MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t n
     } else if (h && selected == ITEM_AI_DEPTH) {
         o->ai_depth = !o->ai_depth;
         *changed = dirty = true;
+    } else if (h && selected == ITEM_EXT_AIM) {
+        o->ext_aim = !o->ext_aim;
+        *changed = dirty = true;
     } else if (h && selected == ITEM_LOCAL_P2) {
         o->local_p2 = !o->local_p2;
         *changed = dirty = true;
@@ -379,6 +383,7 @@ MenuAction wfg_menu_input(float stick_x, float stick_y, bool confirm, uint64_t n
     if (selected == ITEM_VOXELS) { o->voxels = !o->voxels; *changed = dirty = true; }
     if (selected == ITEM_AI_DEPTH) { o->ai_depth = !o->ai_depth; *changed = dirty = true; }
     if (selected == ITEM_LOCAL_P2) { o->local_p2 = !o->local_p2; *changed = dirty = true; }
+    if (selected == ITEM_EXT_AIM) { o->ext_aim = !o->ext_aim; *changed = dirty = true; }
     if (selected == ITEM_BACKGROUND) { o->background = (o->background + 1) % 3; *changed = dirty = true; }
     if (selected == ITEM_X360_DRIVER) { o->x360_driver = (o->x360_driver + 1) % WG_DRIVER_COUNT; *changed = dirty = true; }
     if (selected == ITEM_LANGUAGE) {
@@ -547,6 +552,8 @@ const uint32_t *wfg_menu_render(const WfgOptions *o, bool gun_connected, const c
                      wfg_lang_name(wfg_lang()));
         else if (i == ITEM_LOCAL_P2)
             snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label), o->local_p2 ? T("activ\xC3\xA9") : T("d\xC3\xA9sactiv\xC3\xA9"));
+        else if (i == ITEM_EXT_AIM)
+            snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label), o->ext_aim ? T("activ\xC3\xA9") : T("d\xC3\xA9sactiv\xC3\xA9"));
         else if (i == ITEM_EXT)
             snprintf(text[i + 1], sizeof text[0], "%s\t%s", T(it->label),
                      o->ext_buttons[0] || o->ext_buttons[1] || o->ext_buttons[2] || o->ext_buttons[3] || o->ext_buttons[4]
