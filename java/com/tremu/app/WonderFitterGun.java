@@ -49,6 +49,7 @@ final class WonderFitterGun {
     private static final Handler main = new Handler(Looper.getMainLooper());
     private static boolean scanning;
     private static int lastSequence = -1;
+    private static int shots;
 
     private WonderFitterGun() {}
 
@@ -141,6 +142,8 @@ final class WonderFitterGun {
 
         @Override public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor d, int status) {
             Log.i(TAG, "Gun ready (status " + status + ")");
+            // A reconnected gun may start its shot sequence where the last one did.
+            lastSequence = -1;
             // The gun only reports magazine changes, so assume it starts loaded.
             notifyMagazine(1);
         }
@@ -163,7 +166,15 @@ final class WonderFitterGun {
                 int sequence = data[i + 1] & 0xFF;
                 if (sequence != lastSequence) {
                     lastSequence = sequence;
-                    try { nativeShot(); } catch (UnsatisfiedLinkError ignored) {}
+                    shots++;
+                    // The first shot and then one in fifty: enough to see in the log that shots arrive.
+                    if (shots == 1 || shots % 50 == 0) Log.i(TAG, "shot " + shots + " (sequence " + sequence + ")");
+                    try {
+                        nativeShot();
+                    } catch (UnsatisfiedLinkError e) {
+                        // Would mean the native names no longer match this class: say so, once.
+                        if (shots == 1) Log.w(TAG, "shots do not reach the native side: " + e);
+                    }
                 }
             } else if (type == 0x5C) {
                 notifyMagazine(data[i + 1] == 0 ? 0 : 1);

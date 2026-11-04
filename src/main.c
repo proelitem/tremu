@@ -129,7 +129,13 @@ static atomic_bool guncon2;
 static int mode = MODE_SPLASH;
 static uint64_t splash_until;
 static char carousel_footer[320];
-static bool confirm_was;
+/* Confirmation (splash, carousel, menu) is an edge on each source on its own: the right A, the
+ * right trigger, a WonderFitter shot and a Bluetooth gun's trigger. They used to be OR-ed before
+ * the edge, so one source held down (a gun whose axis rests past the threshold, a trigger the
+ * mount keeps pressed, a key whose release never came) silenced every other one: nothing
+ * launched from the carousel while the gun was connected. */
+static bool confirm_a_was, confirm_trigger_was, confirm_ext_was;
+static unsigned confirm_shots_was;
 static XrSwapchain splash_chain, carousel_chain;
 static XrSwapchainImageOpenGLESKHR *splash_images, *carousel_images;
 static uint32_t splash_image_count, carousel_image_count;
@@ -1215,10 +1221,17 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
     if (session_state != XR_SESSION_STATE_FOCUSED || XR_FAILED(xrSyncActions(session, &si))) return;
     uint64_t now = now_ns();
     bool ext_trigger = wfg_ext_pressed(EXT_TRIGGER);
-    bool trigger = axis(trigger_action, hand_path[RIGHT]) > .55f || wfg_gun_trigger_held(now) || ext_trigger;
-    bool confirm = button(a_action, hand_path[RIGHT]) || trigger;
-    bool confirmed = confirm && !confirm_was;
-    confirm_was = confirm;
+    bool touch_trigger = axis(trigger_action, hand_path[RIGHT]) > .55f;
+    bool a_button = button(a_action, hand_path[RIGHT]);
+    unsigned shots = wfg_gun_shots();
+    bool trigger = touch_trigger || wfg_gun_trigger_held(now) || ext_trigger;
+    /* One frame true per new press of any source (a shot counts as a press, held or not). */
+    bool confirmed = (a_button && !confirm_a_was) || (touch_trigger && !confirm_trigger_was) ||
+                     (ext_trigger && !confirm_ext_was) || shots != confirm_shots_was;
+    confirm_a_was = a_button;
+    confirm_trigger_was = touch_trigger;
+    confirm_ext_was = ext_trigger;
+    confirm_shots_was = shots;
 
     bool menu_button = button(menu_action, hand_path[LEFT]);
     if (menu_button && !menu_button_was && mode != MODE_SPLASH) set_menu_open(!menu_open, time);
@@ -1240,7 +1253,8 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
         bool erase = button(b_action, hand_path[RIGHT]);
         if (erase && !erase_was) wfg_menu_text_erase();
         erase_was = erase;
-        MenuAction action = wfg_menu_input(stick.x, stick.y, confirm, now, &options, &changed);
+        /* The menu detects its own edges: it gets the one-frame pulse, never a held level. */
+        MenuAction action = wfg_menu_input(stick.x, stick.y, confirmed, now, &options, &changed);
         if (changed) {
             wfg_options_store_gun(&options);
             wfg_options_save(options_path, &options);
@@ -1296,7 +1310,7 @@ static void read_input(XrTime time, float aspect, WgGun guns[2]) {
             }
             set_menu_open(false, time);
         }
-        confirm_was = true;  /* the press that closes the menu must not also launch a game */
+        /* The press that closed the menu was consumed above: each source already counts as seen. */
         return;
     }
     if (mode == MODE_SPLASH) {
@@ -1395,8 +1409,13 @@ static int32_t on_input(struct android_app *app, AInputEvent *event) {
 
 static void on_cmd(struct android_app *app, int32_t cmd) {
     (void)app;
-    if (cmd == APP_CMD_RESUME) resumed = true;
-    else if (cmd == APP_CMD_PAUSE) resumed = false;
+    if (cmd == APP_CMD_RESUME) {
+        resumed = true;
+        /* Releases a gun's key or button whose "up" went to another app while we were away. */
+        wfg_ext_release_all();
+    } else if (cmd == APP_CMD_PAUSE) {
+        resumed = false;
+    }
     else if (cmd == APP_CMD_DESTROY) quit = true;
 }
 

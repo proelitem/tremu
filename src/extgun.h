@@ -17,6 +17,8 @@ void wfg_ext_set_bindings(const int bindings[EXT_ROLES]);
 /* Returns 1 when the event belongs to a gun (and must not reach Android, e.g. B = Back). */
 int32_t wfg_ext_input(const AInputEvent *event);
 bool wfg_ext_pressed(ExtRole role);
+/* Forgets every key, button and axis held (on resume: a release may have gone elsewhere). */
+void wfg_ext_release_all(void);
 /* The gun's joystick or hat, -1..1 (y up positive), for the carousel and the menu. */
 void wfg_ext_stick(float *x, float *y);
 

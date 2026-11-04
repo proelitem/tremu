@@ -13,6 +13,11 @@ enum { MOUSE_BASE = 1000, AXIS_POS = 2000, AXIS_NEG = 3000, MAX_KEYS = 400, MAX_
 static bool keys[MAX_KEYS];
 static int32_t mouse_buttons;
 static float axes[MAX_AXES];
+/* An axis counts as pushed only once it has been seen at rest: a gamepad-type gun that reports
+ * a trigger or gas axis at 1.0 from its first event (some do, and the Touch mount can hold one)
+ * would otherwise be "firing" from the moment it connects, and with it nothing else could
+ * confirm in the carousel or stop shooting in a game. */
+static bool axis_rested[MAX_AXES];
 static int bindings[EXT_ROLES];
 static bool learning;
 static int learn_role;
@@ -42,9 +47,15 @@ static const int32_t watched[] = {
 static bool code_down(int code) {
     if (code > 0 && code < MAX_KEYS) return keys[code];
     if (code >= MOUSE_BASE && code < MOUSE_BASE + 31) return mouse_buttons & (1 << (code - MOUSE_BASE));
-    if (code >= AXIS_POS && code < AXIS_POS + MAX_AXES) return axes[code - AXIS_POS] > .5f;
-    if (code >= AXIS_NEG && code < AXIS_NEG + MAX_AXES) return axes[code - AXIS_NEG] < -.5f;
+    if (code >= AXIS_POS && code < AXIS_POS + MAX_AXES) return axis_rested[code - AXIS_POS] && axes[code - AXIS_POS] > .5f;
+    if (code >= AXIS_NEG && code < AXIS_NEG + MAX_AXES) return axis_rested[code - AXIS_NEG] && axes[code - AXIS_NEG] < -.5f;
     return false;
+}
+
+void wfg_ext_release_all(void) {
+    memset(keys, 0, sizeof keys);
+    memset(axes, 0, sizeof axes);
+    mouse_buttons = 0;
 }
 
 void wfg_ext_set_bindings(const int b[EXT_ROLES]) { memcpy(bindings, b, sizeof bindings); }
@@ -118,8 +129,9 @@ int32_t wfg_ext_input(const AInputEvent *event) {
         for (size_t i = 0; i < sizeof watched / sizeof watched[0]; i++) {
             int32_t a = watched[i];
             float v = AMotionEvent_getAxisValue(event, a, 0), before = axes[a];
-            if (v > .5f && before <= .5f) press(AXIS_POS + a);
-            if (v < -.5f && before >= -.5f) press(AXIS_NEG + a);
+            if (fabsf(v) < .5f) axis_rested[a] = true;
+            if (axis_rested[a] && v > .5f && before <= .5f) press(AXIS_POS + a);
+            if (axis_rested[a] && v < -.5f && before >= -.5f) press(AXIS_NEG + a);
             axes[a] = v;
         }
         return 1;
