@@ -25,6 +25,7 @@
     <package android:name="org.timecrisis.quest" />
     <package android:name="info.cemu.cemu" />
     <package android:name="org.vita3k.emulator" />
+    <package android:name="com.armsx3" />
     <package android:name="com.xmjssvr.BowArrowEn" />
   </queries>
   <application android:label="Tremu" android:icon="@mipmap/ic_launcher" android:debuggable="true" android:allowBackup="false"
