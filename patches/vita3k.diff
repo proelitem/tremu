@@ -927,7 +927,7 @@ new file mode 100644
 +    pressed[RP_SELECT] = pressed[RP_SELECT] || (menu && gripL > 0.5f);
 +    for (int i = 0; i < RP_COUNT; i++)
 +        overlay_set_button(RETROPAD_TO_SDL[i], pressed[i]);
-+    { // TEMP: which Touch input gives what, for the report that the right grip fires.
++    { // Which Touch inputs press which buttons, logged when they change: the first thing to read when a control feels wrong.
 +        static uint32_t s_inputs_logged;
 +        uint32_t inputs = 0;
 +        for (int i = 0; i < TI_COUNT; i++)
@@ -937,7 +937,7 @@ new file mode 100644
 +            uint32_t buttons = 0;
 +            for (int i = 0; i < RP_COUNT; i++)
 +                buttons |= pressed[i] ? 1u << i : 0;
-+            XR_LOG("TEMP inputs 0x%x buttons 0x%x front %d rear %d attached %d", inputs, buttons, front, rear, overlay_virtual_controller_attached());
++            XR_LOG("Touch inputs 0x%x -> buttons 0x%x, front %d rear %d, controller attached %d", inputs, buttons, front, rear, overlay_virtual_controller_attached());
 +        }
 +    }
 +    float analogX = 0, analogY = 0;
