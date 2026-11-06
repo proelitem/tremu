@@ -12,7 +12,7 @@ index 892cf00..ddee057 100644
  	}
  
 diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
-index 080e2f3..bc33d8e 100644
+index 080e2f3..6c622f5 100644
 --- a/android/app/src/main/AndroidManifest.xml
 +++ b/android/app/src/main/AndroidManifest.xml
 @@ -46,7 +46,17 @@
@@ -51,7 +51,7 @@ index 080e2f3..bc33d8e 100644
  
          </activity>
  
-+        <activity android:name=".WfgLaunchActivity" android:exported="true" />
++        <activity android:name=".TremuLaunchActivity" android:exported="true" />
 +
          <service
              android:name=".InstallForegroundService"
@@ -110,14 +110,14 @@ index 4f2ff83..21691f3 100644
          super.surfaceDestroyed(holder);
      }
 diff --git a/android/app/src/main/java/org/vita3k/emulator/Emulator.java b/android/app/src/main/java/org/vita3k/emulator/Emulator.java
-index 5a5fb98..e456cac 100644
+index 5a5fb98..f178d24 100644
 --- a/android/app/src/main/java/org/vita3k/emulator/Emulator.java
 +++ b/android/app/src/main/java/org/vita3k/emulator/Emulator.java
 @@ -205,6 +205,14 @@ public class Emulator extends SDLActivity
              finish();
              return;
          }
-+        android.view.Surface xr = NativeXr.start(this, getIntent().getIntArrayExtra(WfgLaunchActivity.EXTRA_PAD));
++        android.view.Surface xr = NativeXr.start(this, getIntent().getIntArrayExtra(TremuLaunchActivity.EXTRA_PAD));
 +        if (xr == null) {
 +            Log.e(TAG, "OpenXR did not start");
 +            finish();
@@ -153,7 +153,7 @@ index 5a5fb98..e456cac 100644
 +    @Keep
 +    public void onXrQuit() {
 +        runOnUiThread(() -> {
-+            String caller = getIntent().getStringExtra(WfgLaunchActivity.EXTRA_RETURN_PACKAGE);
++            String caller = getIntent().getStringExtra(TremuLaunchActivity.EXTRA_RETURN_PACKAGE);
 +            Intent back = caller == null ? null : getPackageManager().getLaunchIntentForPackage(caller);
 +            if (back != null)
 +                startActivity(back);
@@ -226,7 +226,7 @@ index c76dc78..2248492 100644
  
  JNIEXPORT void JNICALL
 diff --git a/vita3k/config/include/config/config.h b/vita3k/config/include/config/config.h
-index 18a578c..a6f2461 100644
+index 18a578c..7c690fa 100644
 --- a/vita3k/config/include/config/config.h
 +++ b/vita3k/config/include/config/config.h
 @@ -145,7 +145,7 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
@@ -234,7 +234,7 @@ index 18a578c..a6f2461 100644
      code(bool, "archive-log", false, archive_log)                                                       \
      code(std::string, "backend-renderer", "Vulkan", backend_renderer)                                   \
 -    code(std::string, "custom-driver-name", "", custom_driver_name)                                     \
-+    code(std::string, "custom-driver-name", "WFG-Turnip", custom_driver_name)                                     \
++    code(std::string, "custom-driver-name", "Tremu-Turnip", custom_driver_name)                                     \
      code(bool, "turbo-mode", false, turbo_mode)                                                         \
      code(int, "gpu-idx", 0, gpu_idx)                                                                    \
      code(bool, "high-accuracy", false, high_accuracy)                                                   \
@@ -375,10 +375,10 @@ new file mode 100644
 +    /** Blocks until the session exists; null when OpenXR cannot start. padMap: Tremu's Touch mapping, or null. */
 +    public static native Surface start(Activity activity, int[] padMap);
 +}
-diff --git a/android/app/src/main/java/org/vita3k/emulator/WfgLaunchActivity.java b/android/app/src/main/java/org/vita3k/emulator/WfgLaunchActivity.java
+diff --git a/android/app/src/main/java/org/vita3k/emulator/TremuLaunchActivity.java b/android/app/src/main/java/org/vita3k/emulator/TremuLaunchActivity.java
 new file mode 100644
 --- /dev/null
-+++ b/android/app/src/main/java/org/vita3k/emulator/WfgLaunchActivity.java
++++ b/android/app/src/main/java/org/vita3k/emulator/TremuLaunchActivity.java
 @@ -0,0 +1,141 @@
 +package org.vita3k.emulator;
 +
@@ -402,11 +402,11 @@ new file mode 100644
 + * Started by Tremu with a game of Download/Roms/vita: installs what is missing (the player's firmware
 + * files found in that folder, the game), then opens it in the headset.
 + */
-+public class WfgLaunchActivity extends Activity {
-+    public static final String EXTRA_PATH = "wfg_path";
-+    public static final String EXTRA_RETURN_PACKAGE = "wfg_return_package";
-+    public static final String EXTRA_PAD = "wfg_pad";
-+    private static final String TURNIP = "WFG-Turnip";
++public class TremuLaunchActivity extends Activity {
++    public static final String EXTRA_PATH = "tremu_path";
++    public static final String EXTRA_RETURN_PACKAGE = "tremu_return_package";
++    public static final String EXTRA_PAD = "tremu_pad";
++    private static final String TURNIP = "Tremu-Turnip";
 +    private static final File ROMS = new File("/storage/emulated/0/Download/Roms/vita");
 +
 +    private TextView status;
@@ -419,7 +419,7 @@ new file mode 100644
 +        status.setTextSize(22);
 +        setContentView(status);
 +        show("Vita3K...");
-+        new Thread(this::prepare, "WfgLaunch").start();
++        new Thread(this::prepare, "TremuLaunch").start();
 +    }
 +
 +    private void show(String text) {

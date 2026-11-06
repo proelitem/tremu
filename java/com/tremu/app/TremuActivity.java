@@ -236,11 +236,11 @@ public final class TremuActivity extends NativeActivity {
     public static boolean launchVita(String path) {
         if (!isPackageInstalled("org.vita3k.emulator")) return false;
         android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW)
-                .setClassName("org.vita3k.emulator", "org.vita3k.emulator.WfgLaunchActivity")
-                .putExtra("wfg_path", path)
+                .setClassName("org.vita3k.emulator", "org.vita3k.emulator.TremuLaunchActivity")
+                .putExtra("tremu_path", path)
                 .putExtra("title_id", VitaLibrary.titleId(new java.io.File(path)))
-                .putExtra("wfg_pad", VitaLibrary.padMap(new java.io.File(instance.getFilesDir(), "tremu.cfg")))
-                .putExtra("wfg_return_package", instance.getPackageName())
+                .putExtra("tremu_pad", VitaLibrary.padMap(new java.io.File(instance.getFilesDir(), "tremu.cfg")))
+                .putExtra("tremu_return_package", instance.getPackageName())
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
         WonderFitterGun.stop();
         instance.startActivity(intent);

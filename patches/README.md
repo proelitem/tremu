@@ -18,6 +18,8 @@ Les cœurs propres à Tremu sont compilés depuis les sources d'origine, gardée
 
 Les shaders de la vue stéréo de Xbox 360 sous `gpu/shaders/bytecode` sont générés : compiler les `tremu_stereo_*.cs.glsl` avec `tools/build/compile_shader_spirv.py` après avoir appliqué le diff (le build de `tools/build_xenia.py` le fait).
 
+Le pilote Vulkan « Tremu-Turnip » est un fichier binaire, absent des diffs : `tools/build_turnip.py` le produit (`third_party/turnip/Tremu-Turnip.zip`) et il est copié dans `android/app/assets/drivers/` de Vita3K.
+
 Les diffs sont produits par `tools/make_patches.py` (nos commits, les changements non commités et les nouveaux fichiers). À relancer après chaque modification d'un émulateur, avant de publier.
 
 Les autres cœurs (SNES, Mega Drive, Saturn, PS1, Dreamcast, GameCube et Wii) ne sont pas modifiés : ils viennent du buildbot libretro.
