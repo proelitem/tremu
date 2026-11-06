@@ -10,7 +10,7 @@ target_include_directories(native_app_glue PUBLIC "${GLUE}")
 add_library(openxr_loader SHARED IMPORTED)
 set_target_properties(openxr_loader PROPERTIES IMPORTED_LOCATION "${XR}/openxr_loader/libs/android.arm64-v8a/libopenxr_loader.so")
 
-add_library(tremu SHARED src/main.c src/core.c src/gun.c src/menu.c src/options.c src/carousel.c src/netplay.c src/internet.c src/extgun.c src/systems.c src/voxel.c src/depth.c src/lang.c src/padmap.c src/passthrough.c src/perf.c)
+add_library(tremu SHARED src/main.c src/core.c src/gun.c src/menu.c src/options.c src/carousel.c src/netplay.c src/internet.c src/extgun.c src/gamepad.c src/systems.c src/voxel.c src/depth.c src/lang.c src/padmap.c src/passthrough.c src/perf.c)
 target_include_directories(tremu PRIVATE "${XR}/headers/include" third_party)
 target_compile_options(tremu PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 # NativeActivity looks up ANativeActivity_onCreate from the glue library.

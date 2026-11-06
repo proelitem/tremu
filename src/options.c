@@ -108,6 +108,7 @@ void tremu_options_load(const char *path, TremuOptions *o) {
         else if (!strcmp(key, "ai_depth")) o->ai_depth = value != 0;
         else if (!strcmp(key, "stereo")) o->stereo = value;
         else if (!strcmp(key, "local_p2")) o->local_p2 = value != 0;
+        else if (!strcmp(key, "ext_aim")) o->ext_aim = value != 0;
         else if (!strcmp(key, "language")) o->language = value;
         else if (!strcmp(key, "background")) o->background = value;
         else if (!strcmp(key, "x360_driver")) o->x360_driver = value;
@@ -131,7 +132,7 @@ bool tremu_options_save(const char *path, const TremuOptions *o) {
                       o->game, o->gun) > 0;
     fprintf(f, "voxels=%d\nai_depth=%d\nstereo=%d\nlanguage=%d\n", o->voxels ? 1 : 0, o->ai_depth ? 1 : 0, o->stereo, o->language);
     fprintf(f, "ext_buttons=%d,%d,%d,%d,%d\n", o->ext_buttons[0], o->ext_buttons[1], o->ext_buttons[2], o->ext_buttons[3], o->ext_buttons[4]);
-    fprintf(f, "pad_defaults=4\nbackground=%d\nx360_driver=%d\nadhoc_mac=%s\n", o->background, o->x360_driver, o->adhoc_mac);
+    fprintf(f, "pad_defaults=4\nbackground=%d\nx360_driver=%d\nadhoc_mac=%s\next_aim=%d\n", o->background, o->x360_driver, o->adhoc_mac, o->ext_aim ? 1 : 0);
     for (int c = 0; c < TREMU_PAD_CONSOLES; c++) {
         fprintf(f, "pad.%s=", tremu_pad_config_key((TremuPadConsole)c));
         for (int i = 0; i < TI_COUNT; i++) fprintf(f, i ? ",%d" : "%d", o->pad_map[c][i]);

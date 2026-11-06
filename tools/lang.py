@@ -53,6 +53,7 @@ STRINGS = [
     ("Relief IA (jeux sans couches)", "AI depth (games without layers)", "KI-Tiefe (Spiele ohne Ebenen)", "Relieve IA (juegos sin capas)", "AI 深度（无图层的游戏）", "Глубина ИИ (игры без слоёв)"),
     ("Stéréoscopie (PS2, N64, X360)", "Stereoscopy (PS2, N64, X360)", "Stereoskopie (PS2, N64, X360)", "Estereoscopía (PS2, N64, X360)", "立体视觉 (PS2, N64, X360)", "Стереоскопия (PS2, N64, X360)"),
     ("Arme Bluetooth / USB", "Bluetooth / USB gun", "Bluetooth-/USB-Waffe", "Arma Bluetooth / USB", "蓝牙 / USB 枪", "Bluetooth / USB оружие"),
+    ("Visée par le pointeur externe", "Aim with the external pointer", "Zielen mit dem externen Zeiger", "Apuntar con el puntero externo", "使用外部指针瞄准", "Прицел внешним указателем"),
     ("Joueur 2 (Touch gauche)", "Player 2 (left Touch)", "Spieler 2 (linker Touch)", "Jugador 2 (Touch izquierdo)", "玩家 2（左手柄）", "Игрок 2 (левый Touch)"),
     ("Multijoueur", "Multiplayer", "Mehrspieler", "Multijugador", "多人游戏", "Мультиплеер"),
     ("Sauvegarde rapide", "Quick save", "Schnellspeichern", "Guardado rápido", "快速存档", "Быстрое сохранение"),

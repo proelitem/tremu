@@ -6,6 +6,7 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 #include <android/log.h>
+#include <android/native_window.h>
 #include <android_native_app_glue.h>
 #include <dirent.h>
 #include <jni.h>
@@ -29,6 +30,7 @@
 #include "menu.h"
 #include "netplay.h"
 #include "extgun.h"
+#include "gamepad.h"
 #include "internet.h"
 #include "options.h"
 #include "systems.h"
@@ -129,7 +131,13 @@ static atomic_bool guncon2;
 static int mode = MODE_SPLASH;
 static uint64_t splash_until;
 static char carousel_footer[320];
-static bool confirm_was;
+/* Confirmation (splash, carousel, menu) is an edge on each source on its own: the right A, the
+ * right trigger, a WonderFitter shot and a Bluetooth gun's trigger. They used to be OR-ed before
+ * the edge, so one source held down (a gun whose axis rests past the threshold, a trigger the
+ * mount keeps pressed, a key whose release never came) silenced every other one: nothing
+ * launched from the carousel while the gun was connected. */
+static bool confirm_a_was, confirm_trigger_was, confirm_ext_was, confirm_pad_was;
+static unsigned confirm_shots_was;
 static XrSwapchain splash_chain, carousel_chain;
 static XrSwapchainImageOpenGLESKHR *splash_images, *carousel_images;
 static uint32_t splash_image_count, carousel_image_count;
@@ -937,14 +945,43 @@ static void set_menu_open(bool open, XrTime time) {
 
 static XrVector2f left_stick(void);
 
-/* Navigation: the left Touch stick, or the joystick of a Bluetooth/USB gun (Arkade...). */
+/* Navigation: the left Touch stick, the joystick of a Bluetooth/USB gun (Arkade...), or any
+ * gamepad's left stick or d-pad. */
 static XrVector2f nav_stick(void) {
     XrVector2f s = left_stick();
     float gx, gy;
     tremu_ext_stick(&gx, &gy);
     if (fabsf(gx) > fabsf(s.x)) s.x = gx;
     if (fabsf(gy) > fabsf(s.y)) s.y = gy;
+    tremu_gamepad_nav(&gx, &gy);
+    if (fabsf(gx) > fabsf(s.x)) s.x = gx;
+    if (fabsf(gy) > fabsf(s.y)) s.y = gy;
     return s;
+}
+
+/* USB/Bluetooth gamepads on top of the Touch: pad 1 joins player 1, pads 2 to 4 are players 2 to
+ * 4 on their own. Buttons are OR-ed, the larger stick wins. In a gun game a pad cannot aim, so its
+ * buttons act as the gun's (south, R2 or R1 shoot; east, L2 or L1 the pedal; a stick click
+ * reloads), which lets a second player at least start, insert coins and shoot where the game
+ * takes a pad for player 2. */
+static void merge_gamepads(TremuGun guns[TREMU_PLAYERS], bool gun_game) {
+    for (int p = 0; p < TREMU_PLAYERS; p++) {
+        uint16_t pad;
+        int16_t lx, ly, rx, ry;
+        if (!tremu_gamepad_state(p, &pad, &lx, &ly, &rx, &ry)) continue;
+        TremuGun *g = &guns[p];
+        g->pad |= pad;
+        if (abs(lx) > abs(g->lx)) g->lx = lx;
+        if (abs(ly) > abs(g->ly)) g->ly = ly;
+        if (abs(rx) > abs(g->rx)) g->rx = rx;
+        if (abs(ry) > abs(g->ry)) g->ry = ry;
+        g->start = g->start || (pad >> RETRO_DEVICE_ID_JOYPAD_START & 1);
+        g->select = g->select || (pad >> RETRO_DEVICE_ID_JOYPAD_SELECT & 1);
+        if (!gun_game) continue;
+        g->trigger = g->trigger || (pad & (1u << RETRO_DEVICE_ID_JOYPAD_B | 1u << RETRO_DEVICE_ID_JOYPAD_R2 | 1u << RETRO_DEVICE_ID_JOYPAD_R));
+        g->aux_a = g->aux_a || (pad & (1u << RETRO_DEVICE_ID_JOYPAD_A | 1u << RETRO_DEVICE_ID_JOYPAD_L2 | 1u << RETRO_DEVICE_ID_JOYPAD_L));
+        g->reload = g->reload || (pad & (1u << RETRO_DEVICE_ID_JOYPAD_L3 | 1u << RETRO_DEVICE_ID_JOYPAD_R3));
+    }
 }
 
 static XrVector2f stick(int hand) {
@@ -1204,10 +1241,9 @@ static void touch_pad(TremuPadConsole console, bool gun_trigger, bool gun_grenad
 
 /* Syncs the controllers; drives the menu while it is open, the splash and carousel outside games,
  * otherwise fills the lightgun state. Touch and WonderFitter inputs are combined. */
-static void read_input(XrTime time, float aspect, TremuGun guns[2]) {
+static void read_input(XrTime time, float aspect, TremuGun guns[TREMU_PLAYERS]) {
     TremuGun g = {.offscreen = true}, p2 = {.offscreen = true};
-    guns[0] = g;
-    guns[1] = p2;
+    for (int p = 0; p < TREMU_PLAYERS; p++) guns[p] = g;
     XrActiveActionSet as = {action_set, XR_NULL_PATH};
     XrActionsSyncInfo si = {XR_TYPE_ACTIONS_SYNC_INFO};
     si.countActiveActionSets = 1;
@@ -1215,12 +1251,21 @@ static void read_input(XrTime time, float aspect, TremuGun guns[2]) {
     if (session_state != XR_SESSION_STATE_FOCUSED || XR_FAILED(xrSyncActions(session, &si))) return;
     uint64_t now = now_ns();
     bool ext_trigger = tremu_ext_pressed(EXT_TRIGGER);
-    bool trigger = axis(trigger_action, hand_path[RIGHT]) > .55f || tremu_gun_trigger_held(now) || ext_trigger;
-    bool confirm = button(a_action, hand_path[RIGHT]) || trigger;
-    bool confirmed = confirm && !confirm_was;
-    confirm_was = confirm;
+    bool touch_trigger = axis(trigger_action, hand_path[RIGHT]) > .55f;
+    bool a_button = button(a_action, hand_path[RIGHT]);
+    bool pad_button = tremu_gamepad_any(RETRO_DEVICE_ID_JOYPAD_B);  /* a gamepad's south button */
+    unsigned shots = tremu_gun_shots();
+    bool trigger = touch_trigger || tremu_gun_trigger_held(now) || ext_trigger;
+    /* One frame true per new press of any source (a shot counts as a press, held or not). */
+    bool confirmed = (a_button && !confirm_a_was) || (touch_trigger && !confirm_trigger_was) ||
+                     (ext_trigger && !confirm_ext_was) || (pad_button && !confirm_pad_was) || shots != confirm_shots_was;
+    confirm_a_was = a_button;
+    confirm_trigger_was = touch_trigger;
+    confirm_ext_was = ext_trigger;
+    confirm_pad_was = pad_button;
+    confirm_shots_was = shots;
 
-    bool menu_button = button(menu_action, hand_path[LEFT]);
+    bool menu_button = button(menu_action, hand_path[LEFT]) || tremu_gamepad_menu();
     if (menu_button && !menu_button_was && mode != MODE_SPLASH) set_menu_open(!menu_open, time);
     if (!menu_open && mode == MODE_GAME) {
         char ask_title[80], ask_text[64];
@@ -1237,10 +1282,11 @@ static void read_input(XrTime time, float aspect, TremuGun guns[2]) {
         XrVector2f stick = nav_stick();
         bool changed;
         static bool erase_was;
-        bool erase = button(b_action, hand_path[RIGHT]);
+        bool erase = button(b_action, hand_path[RIGHT]) || tremu_gamepad_any(RETRO_DEVICE_ID_JOYPAD_A);
         if (erase && !erase_was) tremu_menu_text_erase();
         erase_was = erase;
-        MenuAction action = tremu_menu_input(stick.x, stick.y, confirm, now, &options, &changed);
+        /* The menu detects its own edges: it gets the one-frame pulse, never a held level. */
+        MenuAction action = tremu_menu_input(stick.x, stick.y, confirmed, now, &options, &changed);
         if (changed) {
             tremu_options_store_gun(&options);
             tremu_options_save(options_path, &options);
@@ -1296,7 +1342,7 @@ static void read_input(XrTime time, float aspect, TremuGun guns[2]) {
             }
             set_menu_open(false, time);
         }
-        confirm_was = true;  /* the press that closes the menu must not also launch a game */
+        /* The press that closed the menu was consumed above: each source already counts as seen. */
         return;
     }
     if (mode == MODE_SPLASH) {
@@ -1305,7 +1351,7 @@ static void read_input(XrTime time, float aspect, TremuGun guns[2]) {
     }
     if (mode == MODE_CAROUSEL) {
         static bool clear_was;
-        bool clear = button(b_action, hand_path[RIGHT]);
+        bool clear = button(b_action, hand_path[RIGHT]) || tremu_gamepad_any(RETRO_DEVICE_ID_JOYPAD_A);
         if (clear && !clear_was && tremu_carousel_search()[0]) tremu_carousel_set_search("");
         clear_was = clear;
         XrVector2f nav = nav_stick();
@@ -1322,6 +1368,17 @@ static void read_input(XrTime time, float aspect, TremuGun guns[2]) {
     if (atomic_load(&emu_state) != 1) return;
 
     aim(time, aspect, RIGHT, &g);
+    float pu, pv;
+    if (options.ext_aim && tremu_ext_pointer(&pu, &pv, now)) {
+        /* A Wii Remote through a DolphinBar (mouse modes) or a mouse-type gun: its pointer over
+         * the window is the aim, the bar standing under the virtual screen. Off the window is
+         * off the screen. Without a recent pointer event the Touch ray stays the aim. */
+        g.offscreen = pu < 0 || pu > 1 || pv < 0 || pv > 1;
+        if (!g.offscreen) {
+            g.x = (int16_t)lroundf((pu * 2 - 1) * 0x7fff);
+            g.y = (int16_t)lroundf((pv * 2 - 1) * 0x7fff);
+        }
+    }
     g.trigger = trigger;
     int layout = atomic_load(&pad_layout);
     if (layout != PAD_NONE) {
@@ -1333,6 +1390,7 @@ static void read_input(XrTime time, float aspect, TremuGun guns[2]) {
         g.reload = tremu_ext_pressed(EXT_ACTION);
         game_haptics(now, axis(trigger_action, hand_path[RIGHT]) > .55f || ext_trigger, false);
         guns[0] = g;
+        merge_gamepads(guns, false);
         return;
     }
     g.aux_a = axis(grip_action, hand_path[RIGHT]) > .55f || tremu_gun_bolt_pressed(now) ||
@@ -1359,6 +1417,7 @@ static void read_input(XrTime time, float aspect, TremuGun guns[2]) {
     game_haptics(now, axis(trigger_action, hand_path[RIGHT]) > .55f || ext_trigger, options.local_p2 && p2.trigger);
     guns[0] = g;
     guns[1] = p2;
+    merge_gamepads(guns, true);
 }
 
 static void handle_xr_events(void) {
@@ -1387,16 +1446,27 @@ static void handle_xr_events(void) {
 
 static bool resumed;
 
-/* Gamepads, mice and keyboards: buttons of Bluetooth/USB guns (see extgun.c). */
+/* Gamepads as RetroPads (gamepad.c); gamepads, mice and keyboards as the buttons of Bluetooth/USB
+ * guns (extgun.c). A second, third or fourth gamepad is its player's alone: it stays out of the
+ * gun roles, which belong to player 1. */
 static int32_t on_input(struct android_app *app, AInputEvent *event) {
     (void)app;
-    return tremu_ext_input(event);
+    int32_t taken = tremu_gamepad_input(event);
+    if (tremu_gamepad_index(AInputEvent_getDeviceId(event)) <= 0) taken |= tremu_ext_input(event);
+    return taken;
 }
 
 static void on_cmd(struct android_app *app, int32_t cmd) {
-    (void)app;
-    if (cmd == APP_CMD_RESUME) resumed = true;
-    else if (cmd == APP_CMD_PAUSE) resumed = false;
+    if ((cmd == APP_CMD_INIT_WINDOW || cmd == APP_CMD_WINDOW_RESIZED) && app->window)
+        tremu_ext_set_window(ANativeWindow_getWidth(app->window), ANativeWindow_getHeight(app->window));
+    if (cmd == APP_CMD_RESUME) {
+        resumed = true;
+        /* Releases a gun's or pad's key or button whose "up" went to another app while we were away. */
+        tremu_ext_release_all();
+        tremu_gamepad_release_all();
+    } else if (cmd == APP_CMD_PAUSE) {
+        resumed = false;
+    }
     else if (cmd == APP_CMD_DESTROY) quit = true;
 }
 
@@ -1513,12 +1583,11 @@ void android_main(struct android_app *app) {
         pthread_mutex_lock(&emu_lock);
         float aspect = shared_aspect;
         pthread_mutex_unlock(&emu_lock);
-        TremuGun guns[2];
+        TremuGun guns[TREMU_PLAYERS];
         if (menu_open) update_multiplayer_choices();
         read_input(fs.predictedDisplayTime, aspect, guns);
         pthread_mutex_lock(&emu_lock);
-        shared_guns[0] = guns[0];
-        shared_guns[1] = guns[1];
+        memcpy(shared_guns, guns, sizeof shared_guns);
         pthread_mutex_unlock(&emu_lock);
         /* The arcade pauses while the menu is open or the headset menu has focus. */
         atomic_store(&emu_active, session_state == XR_SESSION_STATE_FOCUSED && !menu_open && mode == MODE_GAME);

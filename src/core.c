@@ -868,14 +868,24 @@ size_t tremu_core_state_size(void) { return cur && cur->serialize_size ? cur->se
 bool tremu_core_save_state(void *data, size_t size) { return cur && cur->serialize && cur->serialize(data, size); }
 bool tremu_core_load_state(const void *data, size_t size) { return cur && cur->unserialize && cur->unserialize(data, size); }
 
+/* Every byte of a small RAM; of a big one (PS2 32 MB, Dreamcast 16 MB) one byte in N so the
+ * check reads a megabyte at most. This runs on the emulator thread once a second: bit by bit
+ * over the whole RAM it took 100 to 300 ms on the headset, a hitch every second that also
+ * held back the input packets. A divergence is never confined to one byte, so a sample
+ * catches it a check or two later at worst. */
 uint32_t tremu_core_ram_crc(void) {
+    static uint32_t table[256];
+    if (!table[1])
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & -(c & 1));
+            table[i] = c;
+        }
     const uint8_t *ram = cur && cur->memory_data ? cur->memory_data(RETRO_MEMORY_SYSTEM_RAM) : NULL;
     size_t size = cur && cur->memory_size ? cur->memory_size(RETRO_MEMORY_SYSTEM_RAM) : 0;
+    size_t step = size > (size_t)1 << 20 ? size >> 20 : 1;
     uint32_t crc = 0xFFFFFFFFu;
-    for (size_t i = 0; ram && i < size; i++) {
-        crc ^= ram[i];
-        for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1));
-    }
+    for (size_t i = 0; ram && i < size; i += step) crc = table[(crc ^ ram[i]) & 0xFF] ^ (crc >> 8);
     return ~crc;
 }
 
