@@ -26,7 +26,8 @@ static void net_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* Input delay bounds (frames), frames repeated in every input packet, ring size. A chunk and
  * its 12-byte header fit one Wi-Fi frame (MTU 1500 less the UDP/IP headers). */
-enum { DELAY_DEFAULT = 2, DELAY_MAX = 8, REDUNDANT = 10, RING = 256, CHUNK = 1400, CRC_EVERY = 60, CRC_HISTORY = 8 };
+enum { DELAY_DEFAULT = 2, DELAY_MAX = 8, REDUNDANT = 10, RING = 256, CHUNK = 1400, CRC_EVERY = 60, CRC_HISTORY = 8,
+       SETTLE_FRAMES = 600 };
 static const uint64_t MS = 1000000ull;
 
 /* Protocol 2: up to four players around the host (see netplay.h). 4: the game state travels
@@ -90,6 +91,7 @@ typedef struct Guest {
     uint32_t crc_frame, crc;
     uint32_t checked_frame;  /* last frame whose CRC was compared: each mismatch counts once */
     int mismatches;          /* checks in a row that differed */
+    uint32_t loaded_frame;   /* frame it loaded the game at: no checks for a while after */
 } Guest;
 static Guest guests[NET_MAX_PLAYERS];
 static int sending_slot;  /* guest receiving the game state, 0 when none */
@@ -110,6 +112,12 @@ static uint8_t *state_buf, *chunk_have;
 static size_t state_size, packed_size;
 static uint32_t chunk_count, chunks_received, send_cursor, missing_requests, transfer_frame;
 static uint64_t last_progress_log_ns;
+/* Guest: frames the game ran on its own while receiving. A state does not hold everything: a
+ * Dreamcast's BIOS (Flycast's own) fills part of the RAM in the first frames, and a guest that
+ * loaded the host's state without ever running kept that part different (the pictures agreed,
+ * the RAM check did not). Two seconds of running first, then the state. */
+enum { WARM_FRAMES = 120 };
+static int warm_frames;
 
 /* A transfer may take 30 s plus a second per megabyte on the wire: a big state on a slow Wi-Fi
  * is slow, not dead. */
@@ -437,11 +445,20 @@ void netplay_dismiss_failure(void) {
 
 /* WELCOME: refusal, the guest's slot, resync flag, state size, chunks, the frame it starts at
  * and the compressed size. */
+/* When the HELLO being answered arrived: the WELCOME says how long the host held it (packing a
+ * Dreamcast state takes 150 ms), so the guest's round trip, hence its input delay, is the
+ * network's alone. */
+static uint64_t hello_rx_ns;
+
 static void send_welcome_to(const struct sockaddr_in *to, int refuse, int slot) {
-    uint8_t p[25] = {0};
+    uint8_t p[27] = {0};
     /* The cores draw their own gun sights into the picture the headsets compare: everyone shows
      * them as the host does. */
     p[24] = tremu_core_crosshair();
+    uint64_t held = (now_ns() - hello_rx_ns) / MS;
+    if (held > 65535) held = 65535;
+    p[25] = (uint8_t)held;
+    p[26] = (uint8_t)(held >> 8);
     header(p, T_WELCOME);
     p[4] = (uint8_t)refuse;
     p[5] = (uint8_t)slot;
@@ -509,6 +526,7 @@ static int slot_of(const struct sockaddr_in *from) {
 
 /* Host: a headset asked to join. */
 static void accept_guest(const struct sockaddr_in *from, const uint8_t *p, ssize_t n) {
+    hello_rx_ns = now_ns();
     int slot = slot_of(from);
     if (slot && sending_slot == slot) { send_welcome_to(from, REFUSE_NONE, slot); return; }  /* our welcome was lost */
     if (slot && guests[slot].playing) return;  /* late duplicate */
@@ -572,6 +590,10 @@ static void drop_guest(int slot, const char *why) {
 static void check_guest_crc(int slot) {
     Guest *g = &guests[slot];
     if (!g->crc_frame || g->crc_frame <= g->checked_frame) return;
+    /* Right after loading a state, part of the RAM differs for a few seconds and then agrees again
+     * (Flycast, House of the Dead 2): comparing then repaired a sound game, which loaded a state
+     * again, and so on, freezing the game for 5 s each time. */
+    if (g->crc_frame < g->loaded_frame + SETTLE_FRAMES) return;
     for (int i = 0; i < CRC_HISTORY; i++) {
         if (!host_crc_frames[i] || host_crc_frames[i] != g->crc_frame) continue;
         g->checked_frame = g->crc_frame;
@@ -580,7 +602,10 @@ static void check_guest_crc(int slot) {
          * (MAME at power-on) differs for a moment while the games are the same. A diverged game
          * differs at every check: three in a row (3 s) before calling it a desync. */
         LOG("player %d picture differs at frame %u: host %08x guest %08x", slot + 1, g->crc_frame, host_crcs[i], g->crc);
-        if (++g->mismatches != 3) return;
+        /* GPU cores compare RAM, which can differ for ten seconds or more while the picture stays the
+         * same (Flycast, House of the Dead 2), and their state is big (a Dreamcast's takes 5 s and
+         * more to send, the game frozen meanwhile): only a difference that lasts 30 s is a desync. */
+        if (++g->mismatches != (tremu_core_sync_is_picture() ? 3 : 30)) return;
         atomic_fetch_add(&desyncs, 1);
         LOG("player %d desync at frame %u", slot + 1, g->crc_frame);
         /* Started together: a copied state would not carry the whole game either. */
@@ -621,6 +646,7 @@ static bool start_receiving(const uint8_t *p) {
         return false;
     }
     started_ns = now_ns();
+    warm_frames = 0;
     atomic_store(&state, NET_RECEIVING);
     return true;
 }
@@ -685,6 +711,8 @@ static void receive(void) {
             {
                 /* Input delay from the round trip: half of it, in 60 Hz frames, plus one. */
                 uint64_t rtt = now_ns() - last_hello_ns;
+                uint64_t held = n >= 27 ? (uint64_t)(p[25] | p[26] << 8) * MS : 0;
+                rtt = rtt > held ? rtt - held : 0;
                 int frames = (int)((rtt / 2 + 16666666ull) / 16666667ull) + 1;
                 delay = frames < DELAY_DEFAULT ? DELAY_DEFAULT : frames > DELAY_MAX ? DELAY_MAX : frames;
                 my_slot = p[5];
@@ -742,6 +770,7 @@ static void receive(void) {
                 g->playing = true;
                 g->crc_frame = g->checked_frame = 0;
                 g->mismatches = 0;
+                g->loaded_frame = transfer_frame;
                 sending_slot = 0;
                 have_peer = false;
                 free_transfer();
@@ -799,7 +828,7 @@ static void receive(void) {
 }
 
 static void announce(uint64_t now) {
-    if (now - last_announce_ns < 1000 * MS) return;
+    if (now - last_announce_ns < 1000 * MS || getenv("TREMU_NO_ANNOUNCE")) return;  /* test bench: unseen */
     last_announce_ns = now;
     uint8_t p[4 + 64 + 64];
     header(p, T_ANNOUNCE);
@@ -981,10 +1010,12 @@ bool netplay_frame(const TremuGun *local, TremuGun guns[NET_MAX_PLAYERS]) {
             fail(T("Transfert de la partie interrompu"));
             return false;
         }
-        if (chunks_received < chunk_count) {
+        if (chunks_received < chunk_count || warm_frames < WARM_FRAMES) {
             /* Ask for the gap once the host has had time to send past it. */
-            if (now - last_send_ns > 300 * MS) request_missing();
-            return false;
+            if (chunks_received < chunk_count && now - last_send_ns > 300 * MS) request_missing();
+            /* Meanwhile the game runs here alone (its picture stays on, and see warm_frames). */
+            for (int s = 0; s < NET_MAX_PLAYERS; s++) guns[s] = NEUTRAL;
+            return true;
         }
         {
             uint8_t *raw = malloc(state_size);
@@ -1044,6 +1075,7 @@ void netplay_idle(void) {
 }
 
 void netplay_after_frame(void) {
+    if (atomic_load(&state) == NET_RECEIVING) warm_frames++;
     if (atomic_load(&state) != NET_PLAYING || frame % CRC_EVERY) return;
     local_crc = tremu_core_sync_crc();
     local_crc_frame = frame;

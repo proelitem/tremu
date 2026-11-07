@@ -39,6 +39,7 @@ bool tremu_core_load_state(const void *data, size_t size);
 uint32_t tremu_core_ram_crc(void);
 /* What netplay compares between headsets: the picture of CPU-drawn cores, the RAM of GPU ones. */
 uint32_t tremu_core_sync_crc(void);
+bool tremu_core_sync_is_picture(void);
 /* Latest frame as RGBA8 (R in the low byte), w*h pixels, row pitch w, bottom row first. */
 const uint32_t *tremu_core_frame(unsigned *w, unsigned *h);
 /* Stereo depth strength in percent, 0 for a flat picture; applied at once, also during a game.

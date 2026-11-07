@@ -712,8 +712,9 @@ static bool run_game(void) {
             netplay_stop();
         }
         int boot = atomic_exchange(&boot_host, 0);
-        if (boot && system == SYS_MAME) {
-            netplay_set_boot_start(true);
+        if (boot) {
+            /* After a restart asked for hosting (MAME), or a test writing next_start.txt. */
+            netplay_set_boot_start(system == SYS_MAME);
             netplay_host(key, title, rom_crc, boot == NET_REQ_HOST_INTERNET);
         }
         int state_req = atomic_exchange(&state_request, STATE_REQ_NONE);

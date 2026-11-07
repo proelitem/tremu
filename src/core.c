@@ -163,6 +163,10 @@ static const struct { const char *key, *value; } overrides[] = {
     {"hiscores", "enabled"},                 /* FBNeo: keep high scores (needs bios/fbneo/hiscore.dat) */
     {"dolphin_ir_mode", "2"},                /* Dolphin: the Wiimote pointer follows an absolute pointer */
     {"EnableOverscan", "Disabled"},          /* Our N64: the eyes are copied straight to our framebuffer */
+    /* Flycast: with its renderer on another thread the game is not the same twice from the same
+     * state (measured on House of the Dead 2), so two headsets drift apart; it also ran faster
+     * without on the Quest (146 against 99 frames a second, headless). */
+    {"reicast_threaded_rendering", "disabled"},
 };
 
 static const char *pick_value(const char *key, const char *values) {
@@ -182,6 +186,7 @@ static const char *pick_value(const char *key, const char *values) {
     else if (strstr(key, "gun_cursor")) want = atomic_load(&crosshair_on) ? "enabled" : "disabled";  /* Mega Drive, Mega-CD */
     else if (internal_res_value(key)) want = internal_res_value(key);
     else if (adhoc_value(key)) want = adhoc_value(key);
+
     /* LRPS2 keeps the room for two eyes from the start; it makes them only while
      * GET_VIDEO_VIEWS_STATUS says we show them, so the menu can turn them on and off in a game. */
     else if (strstr(key, "pcsx2_vr_mode")) want = "stereoscopic";
@@ -189,6 +194,23 @@ static const char *pick_value(const char *key, const char *values) {
         static char percent[16];
         snprintf(percent, sizeof percent, "%d%%", atomic_load(&stereo_percent));
         want = percent;
+    }
+    /* Tests (test/nettest.c): TREMU_OPTIONS="key=value,key=value" overrides options by key fragment. */
+    const char *test_options = getenv("TREMU_OPTIONS");
+    for (const char *p = test_options; p && *p;) {
+        const char *eq = strchr(p, '='), *end = strchr(p, ',');
+        if (!end) end = p + strlen(p);
+        if (eq && eq < end && (size_t)(eq - p) < 64 && (size_t)(end - eq - 1) < 64) {
+            char k[64], v[64];
+            snprintf(k, sizeof k, "%.*s", (int)(eq - p), p);
+            snprintf(v, sizeof v, "%.*s", (int)(end - eq - 1), eq + 1);
+            if (strstr(key, k)) {
+                static char test_value[64];
+                snprintf(test_value, sizeof test_value, "%s", v);
+                want = test_value;
+            }
+        }
+        p = *end ? end + 1 : end;
     }
     const char *list = strchr(values, ';');
     list = list ? list + 1 : values;
@@ -898,6 +920,8 @@ uint32_t tremu_core_ram_crc(void) {
  * differ between two runs of the same state while the game stays identical, which made the
  * host repair a game that was fine. GPU cores keep the RAM: their picture depends on each
  * headset's resolution. */
+bool tremu_core_sync_is_picture(void) { return !hw_active; }
+
 uint32_t tremu_core_sync_crc(void) {
     if (hw_active || !frame || !frame_w || !frame_h) return tremu_core_ram_crc();
     size_t n = (size_t)frame_w * frame_h, step = n > (1u << 18) ? n >> 18 : 1;
