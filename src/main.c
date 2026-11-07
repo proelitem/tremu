@@ -458,7 +458,9 @@ static void set_load_error(const char *why) {
     pthread_mutex_unlock(&emu_lock);
 }
 
-/* Xenia and xemu can only stop a game by ending the process: leaving this game restarts the app. */
+/* Xenia and xemu can only stop a game by ending the process, and MAME cannot load a second game in
+ * the same process (its Lua engine crashes registering its types again): leaving one of these
+ * games restarts the app. */
 static atomic_bool one_game_process;
 /* The game running links the headsets itself (PSP ad hoc). */
 static atomic_bool adhoc_game;
@@ -497,7 +499,7 @@ static bool run_game(void) {
     tremu_menu_set_pad_console(atomic_load(&pad_layout));
     tremu_core_set_gamepad(pad_game);
     atomic_store(&guncon2, system == SYS_PS2 && !pad_game);
-    atomic_store(&one_game_process, system == SYS_X360 || system == SYS_XBOX);
+    atomic_store(&one_game_process, system == SYS_X360 || system == SYS_XBOX || system == SYS_MAME);
     if (system < 0) { LOG("%s: unknown system", rom); return false; }
     char game_file[sizeof core_rom];
     snprintf(game_file, sizeof game_file, "%s", rom);
