@@ -24,6 +24,13 @@ typedef enum {
     NET_LINK,      /* host of a game with its own network (PSP ad hoc): announced, no lockstep */
 } NetState;
 
+/* Before netplay_host: true starts the guests and the host together from power-on instead of
+ * sending them the game (cores whose save states miss part of the game: MAME). The host must
+ * not have run a frame of the game yet; it waits until the first guest is ready. */
+void netplay_set_boot_start(bool on);
+/* Also writes the netplay log to this file (NULL: only the system log). */
+void netplay_set_log_file(const char *path);
+
 /* rom_key is the archive name (e.g. "term2.zip"); rom_crc identifies the exact file.
  * over_internet also finds the public address (UPnP, STUN) and makes a party code. */
 bool netplay_host(const char *rom_key, const char *title, uint32_t rom_crc, bool over_internet);
@@ -47,6 +54,8 @@ void netplay_dismiss_failure(void);
 /* One step per emulated frame. local is this headset's gun. Returns true with guns[0..3]
  * filled when a frame may run, false when it must wait (handshake, transfer or missing input). */
 bool netplay_frame(const TremuGun *local, TremuGun guns[NET_MAX_PLAYERS]);
+/* The lockstep frame the next netplay_frame runs (the same number on every headset). */
+uint32_t netplay_frame_index(void);
 /* Call after each emulated frame (sync checks). */
 void netplay_after_frame(void);
 /* Call while the game is paused (menu, headset removed): keeps the network serviced

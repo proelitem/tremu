@@ -16,3 +16,10 @@ target_compile_options(tremu PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-mi
 # NativeActivity looks up ANativeActivity_onCreate from the glue library.
 target_link_options(tremu PRIVATE -u ANativeActivity_onCreate)
 target_link_libraries(tremu native_app_glue openxr_loader EGL GLESv3 android log aaudio dl m z)
+
+# Netplay test bench run from adb shell (test/nettest.c); not part of the app.
+if(TREMU_NETTEST)
+  add_executable(tremu_nettest test/nettest.c src/core.c src/netplay.c src/internet.c src/lang.c)
+  target_include_directories(tremu_nettest PRIVATE third_party)
+  target_link_libraries(tremu_nettest EGL GLESv3 android log aaudio dl m z)
+endif()

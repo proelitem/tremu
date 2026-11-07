@@ -37,6 +37,8 @@ size_t tremu_core_state_size(void);
 bool tremu_core_save_state(void *data, size_t size);
 bool tremu_core_load_state(const void *data, size_t size);
 uint32_t tremu_core_ram_crc(void);
+/* What netplay compares between headsets: the picture of CPU-drawn cores, the RAM of GPU ones. */
+uint32_t tremu_core_sync_crc(void);
 /* Latest frame as RGBA8 (R in the low byte), w*h pixels, row pitch w, bottom row first. */
 const uint32_t *tremu_core_frame(unsigned *w, unsigned *h);
 /* Stereo depth strength in percent, 0 for a flat picture; applied at once, also during a game.
@@ -71,3 +73,4 @@ void tremu_core_set_internal_res(int multiple);
 void tremu_core_set_adhoc(const char *server_ip, bool builtin_server, bool relay, const char *mac);
 /* Shows or hides the core's lightgun crosshair; callable from any thread, before or after loading. */
 void tremu_core_set_crosshair(bool on);
+bool tremu_core_crosshair(void);

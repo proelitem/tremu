@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <zlib.h>
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "Tremu", __VA_ARGS__)
 
@@ -271,6 +272,8 @@ static const char *get_variable(const char *key) {
     pthread_mutex_unlock(&options_lock);
     return found;
 }
+
+bool tremu_core_crosshair(void) { return atomic_load(&crosshair_on); }
 
 void tremu_core_set_crosshair(bool on) {
     atomic_store(&crosshair_on, on);
@@ -887,6 +890,21 @@ uint32_t tremu_core_ram_crc(void) {
     uint32_t crc = 0xFFFFFFFFu;
     for (size_t i = 0; ram && i < size; i += step) crc = table[(crc ^ ram[i]) & 0xFF] ^ (crc >> 8);
     return ~crc;
+}
+
+/* The picture of a core that draws on the CPU is the same on every headset whenever the game is,
+ * and every divergence ends up on screen. The reported RAM is not that reliable: MAME's is a
+ * random region (or none at all: CarnEvil reports nothing), FBNeo's Operation Wolf has bytes that
+ * differ between two runs of the same state while the game stays identical, which made the
+ * host repair a game that was fine. GPU cores keep the RAM: their picture depends on each
+ * headset's resolution. */
+uint32_t tremu_core_sync_crc(void) {
+    if (hw_active || !frame || !frame_w || !frame_h) return tremu_core_ram_crc();
+    size_t n = (size_t)frame_w * frame_h, step = n > (1u << 18) ? n >> 18 : 1;
+    uint32_t crc = 0;
+    if (step == 1) return (uint32_t)crc32(0, (const Bytef *)frame, (uInt)(n * 4));
+    for (size_t i = 0; i < n; i += step) crc = (uint32_t)crc32(crc, (const Bytef *)&frame[i], 4);
+    return crc;
 }
 
 void tremu_core_run(const TremuGun guns[TREMU_PLAYERS]) {

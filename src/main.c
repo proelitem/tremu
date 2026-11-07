@@ -102,6 +102,13 @@ static atomic_int emu_cmd;
 /* Multiplayer requests for the running game (the emulator thread owns netplay). */
 enum { NET_REQ_NONE, NET_REQ_HOST, NET_REQ_HOST_INTERNET, NET_REQ_STOP };
 static atomic_int net_request;
+/* MAME hosts from power-on (netplay_set_boot_start): the emulator thread asks the XR loop to
+ * restart the app with the game (restart_host, a NET_REQ_HOST*), which then hosts it before its
+ * first frame (boot_host, idem). */
+static atomic_int restart_host, boot_host;
+/* What a restarted app does first (see restart_with): MAME cannot load a second game in the
+ * same process. */
+static char next_start_path[600];
 /* Quick save/load requests for the running game, and the result shown in the menu footer. */
 enum { STATE_REQ_NONE, STATE_REQ_SAVE, STATE_REQ_LOAD };
 static atomic_int state_request;
@@ -465,6 +472,25 @@ static atomic_bool one_game_process;
 /* The game running links the headsets itself (PSP ad hoc). */
 static atomic_bool adhoc_game;
 
+/* Empties a folder Tremu made for itself (the network games' MAME machine), folders included. */
+static void clear_dir(const char *path) {
+    DIR *d = opendir(path);
+    if (!d) return;
+    for (struct dirent *e; (e = readdir(d));) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char child[1024];
+        snprintf(child, sizeof child, "%s/%s", path, e->d_name);
+        struct stat st;
+        if (!lstat(child, &st) && S_ISDIR(st.st_mode)) {
+            clear_dir(child);
+            rmdir(child);
+        } else {
+            unlink(child);
+        }
+    }
+    closedir(d);
+}
+
 static bool run_game(void) {
     char rom[sizeof core_rom];
     pthread_mutex_lock(&emu_lock);
@@ -616,7 +642,28 @@ static bool run_game(void) {
         atomic_store(&perf_system, system);
         atomic_store(&perf_dirty, true);
     }
-    if (!tremu_core_load(tremu_system_info((TremuSystem)system)->core, core_system_dir, core_save_dir, game_file)) return false;
+    /* A MAME game played over the network starts from power-on on every headset (see
+     * netplay_set_boot_start), so every headset must power on the same machine: MAME keeps each
+     * game's NVRAM, settings and hard disk changes in its save folder, and those differ from one
+     * headset to the other. Network games get a factory-new machine: an empty folder of their own
+     * (its high scores are not kept). */
+    /* This headset's own gun sights (a network game shows them as its host does). */
+    pthread_mutex_lock(&emu_lock);
+    tremu_core_set_crosshair(options.crosshair);
+    pthread_mutex_unlock(&emu_lock);
+    const char *save_dir = core_save_dir;
+    char net_save_dir[600];
+    pthread_mutex_lock(&emu_lock);
+    bool network_start = join_ip[0] || atomic_load(&boot_host);
+    pthread_mutex_unlock(&emu_lock);
+    if (system == SYS_MAME && network_start) {
+        snprintf(net_save_dir, sizeof net_save_dir, "%s/netplay", core_save_dir);
+        clear_dir(net_save_dir);
+        mkdir(net_save_dir, 0700);
+        save_dir = net_save_dir;
+        LOG("network MAME game: fresh machine in %s", net_save_dir);
+    }
+    if (!tremu_core_load(tremu_system_info((TremuSystem)system)->core, core_system_dir, save_dir, game_file)) return false;
     pthread_mutex_lock(&emu_lock);
     shared_max_w = tremu_core_max_width();
     shared_max_h = tremu_core_max_height();
@@ -654,9 +701,21 @@ static bool run_game(void) {
             pthread_mutex_unlock(&emu_lock);
             tremu_core_set_adhoc(server, true, request == NET_REQ_HOST_INTERNET, mac);
             netplay_host_link(key, title, request == NET_REQ_HOST_INTERNET);
-        } else if (request == NET_REQ_HOST || request == NET_REQ_HOST_INTERNET)
+        } else if ((request == NET_REQ_HOST || request == NET_REQ_HOST_INTERNET) && system == SYS_MAME) {
+            /* MAME's save states miss part of the game (a copy drifts away within seconds): the
+             * players start together from power-on, in a fresh process. */
+            atomic_store(&restart_host, request);
+        } else if (request == NET_REQ_HOST || request == NET_REQ_HOST_INTERNET) {
+            netplay_set_boot_start(false);
             netplay_host(key, title, rom_crc, request == NET_REQ_HOST_INTERNET);
-        else if (request == NET_REQ_STOP) netplay_stop();
+        } else if (request == NET_REQ_STOP) {
+            netplay_stop();
+        }
+        int boot = atomic_exchange(&boot_host, 0);
+        if (boot && system == SYS_MAME) {
+            netplay_set_boot_start(true);
+            netplay_host(key, title, rom_crc, boot == NET_REQ_HOST_INTERNET);
+        }
         int state_req = atomic_exchange(&state_request, STATE_REQ_NONE);
         if (state_req) quick_state(key, state_req == STATE_REQ_SAVE);
         if (!atomic_load(&emu_active)) {
@@ -1132,6 +1191,38 @@ static void back_to_carousel(void) {
     mode = MODE_CAROUSEL;
 }
 
+/* Restarts the app (one_game_process), which then does action: "host" or "host_internet" (the
+ * game rom from power-on), "join" (rom at the address extra), "message" (extra in the carousel). */
+static void restart_with(const char *action, const char *rom, const char *key, const char *title, const char *extra) {
+    FILE *f = fopen(next_start_path, "w");
+    if (f) {
+        fprintf(f, "%s\n%s\n%s\n%s\n%s\n", action, rom, key, title, extra);
+        fclose(f);
+    }
+    LOG("restarting the app to %s %s %s", action, key, extra);
+    tremu_restart_after_exit();
+    quit = true;
+}
+
+/* At start: what restart_with asked for, once. */
+static void consume_next_start(void) {
+    FILE *f = fopen(next_start_path, "r");
+    if (!f) return;
+    char lines[5][768] = {{0}};
+    for (int i = 0; i < 5 && fgets(lines[i], sizeof lines[i], f); i++) lines[i][strcspn(lines[i], "\r\n")] = 0;
+    fclose(f);
+    unlink(next_start_path);
+    LOG("after the restart: %s %s %s", lines[0], lines[2], lines[4]);
+    if (!strcmp(lines[0], "message")) {
+        snprintf(carousel_footer, sizeof carousel_footer, "%s", lines[4]);
+    } else if (!strcmp(lines[0], "join") && lines[1][0]) {
+        launch_game(lines[1], lines[2], lines[3], lines[4]);
+    } else if ((!strcmp(lines[0], "host") || !strcmp(lines[0], "host_internet")) && lines[1][0]) {
+        atomic_store(&boot_host, strcmp(lines[0], "host") ? NET_REQ_HOST_INTERNET : NET_REQ_HOST);
+        launch_game(lines[1], lines[2], lines[3], "");
+    }
+}
+
 /* Joins the game rom_key hosted at host ("ip" or "ip:port"), if we have that ROM. */
 static void join_game(const char *rom_key, const char *host) {
     int i = tremu_carousel_find_game(rom_key);
@@ -1141,6 +1232,11 @@ static void join_game(const char *rom_key, const char *host) {
         return;
     }
     const TremuEntry *e = tremu_carousel_entry(i);
+    /* A MAME game is running: the next one needs a fresh process. */
+    if (mode == MODE_GAME && atomic_load(&one_game_process)) {
+        restart_with("join", e->rom, rom_key, e->title, host);
+        return;
+    }
     launch_game(e->rom, rom_key, e->title, host);
 }
 
@@ -1484,6 +1580,13 @@ void android_main(struct android_app *app) {
     snprintf(unzip_dir, sizeof unzip_dir, "%s/unzipped", app->activity->internalDataPath);
     snprintf(drivers_dir, sizeof drivers_dir, "%s/drivers", app->activity->internalDataPath);
     snprintf(options_path, sizeof options_path, "%s/tremu.cfg", app->activity->internalDataPath);
+    snprintf(next_start_path, sizeof next_start_path, "%s/next_start.txt", app->activity->internalDataPath);
+    {
+        /* Each headset keeps the story of its last network games, to read with it plugged in. */
+        char net_log[600];
+        snprintf(net_log, sizeof net_log, "%s/netplay.log", SHARED_DIR);
+        netplay_set_log_file(net_log);
+    }
     tremu_options_load(options_path, &options);
     tremu_ext_set_bindings(options.ext_buttons);
     tremu_core_set_crosshair(options.crosshair);
@@ -1539,6 +1642,8 @@ void android_main(struct android_app *app) {
             if (tremu_intent_game(intent_game, sizeof intent_game)) {
                 const char *name = strrchr(intent_game, '/');
                 launch_game(intent_game, name ? name + 1 : intent_game, name ? name + 1 : intent_game, "");
+            } else {
+                consume_next_start();
             }
         }
         handle_xr_events();
@@ -1656,14 +1761,30 @@ void android_main(struct android_app *app) {
         netplay_status(net_status, sizeof net_status);
         if (mode == MODE_GAME && net == NET_OFF && atomic_load(&adhoc_game) && joined_ip[0])
             snprintf(net_status, sizeof net_status, T("PSP ad hoc : h\xC3\xB4te %s, ouvre le mode multijoueur du jeu"), joined_ip);
+        int host_restart = atomic_exchange(&restart_host, 0);
+        if (mode == MODE_GAME && host_restart) {
+            /* MAME host: the game starts again from power-on with the guests. */
+            char rom[sizeof core_rom], key[sizeof game_key], title[sizeof game_title];
+            pthread_mutex_lock(&emu_lock);
+            snprintf(rom, sizeof rom, "%s", core_rom);
+            snprintf(key, sizeof key, "%s", game_key);
+            snprintf(title, sizeof title, "%s", game_title);
+            pthread_mutex_unlock(&emu_lock);
+            restart_with(host_restart == NET_REQ_HOST_INTERNET ? "host_internet" : "host", rom, key, title, "");
+        }
         if (mode == MODE_GAME && net == NET_FAILED) {
-            /* Joining failed or the host left: back to the carousel with the reason. */
-            snprintf(carousel_footer, sizeof carousel_footer, "%s", net_status);
-            loading_footer = false;
+            /* Joining failed or the host left: back to the carousel with the reason (never playing
+             * on alone with a game that was the host's). */
             netplay_dismiss_failure();
-            atomic_store(&emu_state, 0);
-            atomic_store(&emu_cmd, CMD_CLOSE);
-            mode = MODE_CAROUSEL;
+            if (atomic_load(&one_game_process)) {
+                restart_with("message", "", "", "", net_status);
+            } else {
+                snprintf(carousel_footer, sizeof carousel_footer, "%s", net_status);
+                loading_footer = false;
+                atomic_store(&emu_state, 0);
+                atomic_store(&emu_cmd, CMD_CLOSE);
+                mode = MODE_CAROUSEL;
+            }
         }
         bool joining = net == NET_JOINING || net == NET_RECEIVING;
         /* While a game starts: its loading picture where its screen will be, instead of black. */
@@ -1683,8 +1804,13 @@ void android_main(struct android_app *app) {
                 snprintf(key, sizeof key, "%s", game_key);
                 snprintf(title, sizeof title, "%s", game_title);
                 pthread_mutex_unlock(&emu_lock);
-                snprintf(status, sizeof status, T("Chargement de %s"), title);
-                snprintf(status + strlen(status), sizeof status - strlen(status), "...   %u s", (unsigned)(ms / 1000));
+                if (net == NET_HOSTING || net == NET_SENDING) {
+                    /* A MAME host waits at power-on for the other player (netplay_set_boot_start). */
+                    snprintf(status, sizeof status, "%s", net_status);
+                } else {
+                    snprintf(status, sizeof status, T("Chargement de %s"), title);
+                    snprintf(status + strlen(status), sizeof status - strlen(status), "...   %u s", (unsigned)(ms / 1000));
+                }
                 const uint32_t *pixels = tremu_loading_render(key, title, status, (float)(ms % 1000) * 0.36f);
                 if (pixels && upload_pixels(carousel_chain, carousel_images, pixels, CAROUSEL_WIDTH, CAROUSEL_HEIGHT))
                     carousel_uploaded = true;

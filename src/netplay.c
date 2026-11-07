@@ -8,6 +8,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +18,11 @@
 #include <unistd.h>
 #include <zlib.h>
 
-#define LOG(...) __android_log_print(ANDROID_LOG_INFO, "Tremu-net", __VA_ARGS__)
+/* Also written to a file (netplay_set_log_file): each headset keeps the story of its last games,
+ * read later with the headset plugged in, one at a time. */
+static FILE *log_file;
+static void net_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+#define LOG(...) net_log(__VA_ARGS__)
 
 /* Input delay bounds (frames), frames repeated in every input packet, ring size. A chunk and
  * its 12-byte header fit one Wi-Fi frame (MTU 1500 less the UDP/IP headers). */
@@ -25,10 +30,18 @@ enum { DELAY_DEFAULT = 2, DELAY_MAX = 8, REDUNDANT = 10, RING = 256, CHUNK = 140
 static const uint64_t MS = 1000000ull;
 
 /* Protocol 2: up to four players around the host (see netplay.h). 4: the game state travels
- * compressed, in 1400-byte chunks. */
-enum { PROTOCOL = 4 };
+ * compressed, in 1400-byte chunks. 5: games started together from power-on (WELCOME byte 7),
+ * and the host's own analog sticks rounded like everyone else's. */
+enum { PROTOCOL = 5 };
 enum { T_ANNOUNCE = 1, T_HELLO, T_WELCOME, T_CHUNK, T_MISSING, T_READY, T_INPUT, T_BYE, T_QUERY, T_INFO, T_FRAMES };
-enum { REFUSE_NONE, REFUSE_ROM, REFUSE_NO_STATE, REFUSE_BUSY, REFUSE_WAIT };
+enum { REFUSE_NONE, REFUSE_ROM, REFUSE_NO_STATE, REFUSE_BUSY, REFUSE_WAIT, REFUSE_STARTED };
+
+/* Start together (netplay_set_boot_start): for cores whose save states do not carry the whole game
+ * (MAME: measured on Area 51 and CarnEvil, a copied game drifts away from the host's within
+ * seconds), no state travels. The host waits at power-on, without running a frame, until a guest
+ * that has just loaded the same game is ready; both then run from frame 0 with the same inputs.
+ * Once started, nobody else can join. */
+static bool boot_start, boot_started;
 
 static int sock = -1;
 /* Guest: the host. Host: the guest receiving the game state. */
@@ -75,6 +88,8 @@ typedef struct Guest {
     TremuGun in[RING];
     uint32_t tag[RING];
     uint32_t crc_frame, crc;
+    uint32_t checked_frame;  /* last frame whose CRC was compared: each mismatch counts once */
+    int mismatches;          /* checks in a row that differed */
 } Guest;
 static Guest guests[NET_MAX_PLAYERS];
 static int sending_slot;  /* guest receiving the game state, 0 when none */
@@ -114,6 +129,34 @@ static uint64_t now_ns(void) {
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
 }
+
+static void net_log(const char *fmt, ...) {
+    char line[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    __android_log_print(ANDROID_LOG_INFO, "Tremu-net", "%s", line);
+    if (log_file) {
+        time_t t = time(NULL);
+        struct tm tm;
+        localtime_r(&t, &tm);
+        fprintf(log_file, "%02d-%02d %02d:%02d:%02d %s\n", tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, line);
+        fflush(log_file);
+    }
+}
+
+void netplay_set_log_file(const char *path) {
+    if (log_file) fclose(log_file);
+    log_file = NULL;
+    if (!path) return;
+    /* Kept below a megabyte: the last few games. */
+    FILE *f = fopen(path, "a");
+    if (f && ftell(f) > (1 << 20)) { fclose(f); f = fopen(path, "w"); }
+    log_file = f;
+}
+
+void netplay_set_boot_start(bool on) { boot_start = on; }
 
 static void put32(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
 static uint32_t get32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
@@ -298,9 +341,11 @@ bool netplay_host(const char *key, const char *title, uint32_t crc, bool over_in
     memset(all_tag, 0, sizeof all_tag);
     memset(host_crc_frames, 0, sizeof host_crc_frames);
     atomic_store(&desyncs, 0);
+    boot_started = false;
     update_player_count();
     atomic_store(&state, NET_HOSTING);
-    LOG("hosting %s (crc %08x)%s", key, crc, internet ? " on the Internet" : "");
+    LOG("hosting %s (crc %08x)%s%s", key, crc, internet ? " on the Internet" : "",
+        boot_start ? ", starting together from power-on" : "");
     return true;
 }
 
@@ -375,6 +420,7 @@ void netplay_stop(void) {
 }
 
 NetState netplay_state(void) { return (NetState)atomic_load(&state); }
+uint32_t netplay_frame_index(void) { return frame; }
 bool netplay_is_host(void) { return hosting; }
 bool netplay_is_internet(void) { return internet; }
 int netplay_players(void) { return atomic_load(&player_count); }
@@ -392,11 +438,15 @@ void netplay_dismiss_failure(void) {
 /* WELCOME: refusal, the guest's slot, resync flag, state size, chunks, the frame it starts at
  * and the compressed size. */
 static void send_welcome_to(const struct sockaddr_in *to, int refuse, int slot) {
-    uint8_t p[24] = {0};
+    uint8_t p[25] = {0};
+    /* The cores draw their own gun sights into the picture the headsets compare: everyone shows
+     * them as the host does. */
+    p[24] = tremu_core_crosshair();
     header(p, T_WELCOME);
     p[4] = (uint8_t)refuse;
     p[5] = (uint8_t)slot;
     p[6] = resyncing;
+    p[7] = boot_start;  /* no state follows: start from power-on, at frame transfer_frame (0) */
     put32(p + 8, (uint32_t)state_size);
     put32(p + 12, chunk_count);
     put32(p + 16, transfer_frame);
@@ -470,10 +520,27 @@ static void accept_guest(const struct sockaddr_in *from, const uint8_t *p, ssize
         return;
     }
     if (sending_slot) { send_welcome_to(from, REFUSE_WAIT, 0); return; }  /* one newcomer at a time */
+    if (boot_start && (boot_started || frame)) { send_welcome_to(from, REFUSE_STARTED, 0); return; }
     for (slot = 1; slot < NET_MAX_PLAYERS && guests[slot].used; slot++) {}
     if (slot == NET_MAX_PLAYERS) { send_welcome_to(from, REFUSE_BUSY, 0); return; }
     guests[slot] = (Guest){.used = true, .addr = *from, .last_recv_ns = now_ns()};
     resyncing = false;
+    if (boot_start) {
+        /* Start together: the guest has just loaded the game and run no frame, nor has the host. */
+        free_transfer();
+        memset(local_tag, 0, sizeof local_tag);
+        memset(all_tag, 0, sizeof all_tag);
+        fill_neutral(local_in, local_tag, 0, DELAY_DEFAULT);
+        transfer_frame = 0;
+        sending_slot = slot;
+        peer = guests[slot].addr;
+        have_peer = true;
+        send_welcome_to(&peer, REFUSE_NONE, slot);
+        last_welcome_ns = started_ns = now_ns();
+        atomic_store(&state, NET_SENDING);
+        LOG("player %d (%s) accepted: both start from power-on", slot + 1, inet_ntoa(from->sin_addr));
+        return;
+    }
     if (playing_guests() == 0) {
         /* First guest: the lockstep starts from here; the host's own inputs start neutral. */
         memset(local_tag, 0, sizeof local_tag);
@@ -504,13 +571,20 @@ static void drop_guest(int slot, const char *why) {
 /* Host: a guest's CRC against the host's own for the same frame. */
 static void check_guest_crc(int slot) {
     Guest *g = &guests[slot];
+    if (!g->crc_frame || g->crc_frame <= g->checked_frame) return;
     for (int i = 0; i < CRC_HISTORY; i++) {
         if (!host_crc_frames[i] || host_crc_frames[i] != g->crc_frame) continue;
-        if (host_crcs[i] == g->crc) return;
+        g->checked_frame = g->crc_frame;
+        if (host_crcs[i] == g->crc) { g->mismatches = 0; return; }
+        /* The check compares pictures: a message an emulator shows for a few seconds of real time
+         * (MAME at power-on) differs for a moment while the games are the same. A diverged game
+         * differs at every check: three in a row (3 s) before calling it a desync. */
+        LOG("player %d picture differs at frame %u: host %08x guest %08x", slot + 1, g->crc_frame, host_crcs[i], g->crc);
+        if (++g->mismatches != 3) return;
         atomic_fetch_add(&desyncs, 1);
-        LOG("player %d desync at frame %u: host %08x guest %08x", slot + 1, g->crc_frame, host_crcs[i], g->crc);
-        g->crc_frame = 0;
-        if (sending_slot) return;
+        LOG("player %d desync at frame %u", slot + 1, g->crc_frame);
+        /* Started together: a copied state would not carry the whole game either. */
+        if (sending_slot || boot_start) return;
         /* Repair from the host's game, at most three times a minute (a game that keeps
          * diverging would otherwise spend its time transferring). */
         uint64_t now = now_ns();
@@ -604,17 +678,40 @@ static void receive(void) {
             if (p[4] != REFUSE_NONE) {
                 fail(T(p[4] == REFUSE_ROM ? "ROM diff\xC3\xA9rente de celle de l'h\xC3\xB4te"
                      : p[4] == REFUSE_BUSY ? "La partie a d\xC3\xA9j\xC3\xA0 quatre joueurs"
-                                          : "L'h\xC3\xB4te ne peut pas partager sa partie"));
+                     : p[4] == REFUSE_STARTED ? "Partie d\xC3\xA9j\xC3\xA0 commenc\xC3\xA9" "e : l'h\xC3\xB4te doit choisir H\xC3\xA9" "berger \xC3\xA0 nouveau"
+                                              : "L'h\xC3\xB4te ne peut pas partager sa partie"));
+                break;
+            }
+            {
+                /* Input delay from the round trip: half of it, in 60 Hz frames, plus one. */
+                uint64_t rtt = now_ns() - last_hello_ns;
+                int frames = (int)((rtt / 2 + 16666666ull) / 16666667ull) + 1;
+                delay = frames < DELAY_DEFAULT ? DELAY_DEFAULT : frames > DELAY_MAX ? DELAY_MAX : frames;
+                my_slot = p[5];
+                LOG("player %d, round trip %llu ms, input delay %d frames", my_slot + 1, (unsigned long long)(rtt / MS), delay);
+            }
+            if (n >= 25) {
+                LOG("gun sights %s, as on the host", p[24] ? "shown" : "hidden");
+                tremu_core_set_crosshair(p[24] != 0);
+            }
+            if (p[7]) {
+                /* Start together: this headset has just loaded the game and run no frame. */
+                if (my_slot < 1 || my_slot >= NET_MAX_PLAYERS) { fail(T("L'h\xC3\xB4te ne peut pas partager sa partie")); break; }
+                free_transfer();
+                frame = get32(p + 16);
+                memset(local_tag, 0, sizeof local_tag);
+                memset(all_tag, 0, sizeof all_tag);
+                fill_neutral(local_in, local_tag, frame, delay);
+                local_crc_frame = 0;
+                atomic_store(&desyncs, 0);
+                ready_unconfirmed = true;
+                last_ready_ns = 0;
+                last_recv_ns = now_ns();
+                atomic_store(&state, NET_PLAYING);
+                LOG("welcome: player %d, both start from power-on at frame %u", my_slot + 1, frame);
                 break;
             }
             if (!start_receiving(p)) break;
-            {
-                /* Input delay from the round trip: half of it, in 60 Hz frames, plus one. */
-                uint64_t rtt = started_ns - last_hello_ns;
-                int frames = (int)((rtt / 2 + 16666666ull) / 16666667ull) + 1;
-                delay = frames < DELAY_DEFAULT ? DELAY_DEFAULT : frames > DELAY_MAX ? DELAY_MAX : frames;
-                LOG("player %d, round trip %llu ms, input delay %d frames", my_slot + 1, (unsigned long long)(rtt / MS), delay);
-            }
             LOG("welcome: %zu bytes (%zu packed) in %u chunks, from frame %u", state_size, packed_size, chunk_count, transfer_frame);
             break;
         case T_CHUNK: {
@@ -643,11 +740,13 @@ static void receive(void) {
                 memset(g->tag, 0, sizeof g->tag);
                 fill_neutral(g->in, g->tag, transfer_frame, g->delay);
                 g->playing = true;
-                g->crc_frame = 0;
+                g->crc_frame = g->checked_frame = 0;
+                g->mismatches = 0;
                 sending_slot = 0;
                 have_peer = false;
                 free_transfer();
                 resyncing = false;
+                if (boot_start) boot_started = true;
                 update_player_count();
                 atomic_store(&state, NET_PLAYING);
                 LOG("player %d ready at frame %u with %d frames of delay (%d players)", slot + 1, frame, g->delay,
@@ -773,7 +872,10 @@ static bool host_frame(const TremuGun *local, TremuGun guns[NET_MAX_PLAYERS], ui
     uint32_t ahead = frame + DELAY_DEFAULT;
     bool fresh = local_tag[ahead % RING] != ahead + 1;
     if (fresh) {
-        local_in[ahead % RING] = *local;
+        /* Through the wire format, as the guests will see it (the sticks travel in 8 bits). */
+        uint8_t wire[GUN_BYTES];
+        pack_gun(wire, local);
+        unpack_gun(wire, &local_in[ahead % RING]);
         local_tag[ahead % RING] = ahead + 1;
     }
     if (now - last_frames_ns > 10 * MS) send_frames();
@@ -834,13 +936,15 @@ bool netplay_frame(const TremuGun *local, TremuGun guns[NET_MAX_PLAYERS]) {
     if (hosting) internet_step(now);
     switch (st) {
     case NET_HOSTING:
+        /* Start together: nothing runs until the first guest is ready (see boot_start). */
+        if (boot_start && !boot_started) return false;
         /* Alone: the game runs freely; frame counts on so a newcomer starts from here. */
         guns[0] = *local;
         for (int s = 1; s < NET_MAX_PLAYERS; s++) guns[s] = NEUTRAL;
         frame++;
         return true;
     case NET_SENDING:
-        if (resyncing && now - last_welcome_ns > 500 * MS) {
+        if ((resyncing || boot_start) && now - last_welcome_ns > 500 * MS) {
             send_welcome_to(&peer, REFUSE_NONE, sending_slot);
             last_welcome_ns = now;
         }
@@ -941,7 +1045,7 @@ void netplay_idle(void) {
 
 void netplay_after_frame(void) {
     if (atomic_load(&state) != NET_PLAYING || frame % CRC_EVERY) return;
-    local_crc = tremu_core_ram_crc();
+    local_crc = tremu_core_sync_crc();
     local_crc_frame = frame;
     if (hosting) {
         memmove(host_crc_frames, host_crc_frames + 1, sizeof host_crc_frames - sizeof host_crc_frames[0]);
@@ -967,7 +1071,13 @@ void netplay_status(char *out, size_t size) {
     }
     case NET_HOSTING: {
         char code[12];
-        if (!internet) snprintf(out, size, T("Multijoueur : en attente des joueurs sur le Wi-Fi (jusqu'\xC3\xA0 4)"));
+        if (boot_start && !boot_started && !internet)
+            snprintf(out, size, T("En attente du joueur 2 sur le Wi-Fi : le jeu d\xC3\xA9marre \xC3\xA0 son arriv\xC3\xA9" "e (Solo pour jouer seul)"));
+        else if (boot_start && !boot_started && netplay_code(code))
+            snprintf(out, size, T("Code de la partie : %s  (le jeu d\xC3\xA9marre \xC3\xA0 l'arriv\xC3\xA9" "e du joueur 2)"), code);
+        else if (boot_start && boot_started)
+            snprintf(out, size, T("Multijoueur : l'autre joueur est parti (rejoindre demande de relancer la partie)"));
+        else if (!internet) snprintf(out, size, T("Multijoueur : en attente des joueurs sur le Wi-Fi (jusqu'\xC3\xA0 4)"));
         else if (netplay_code(code)) snprintf(out, size, T("Code de la partie : %s  (en attente des joueurs)"), code);
         else if (atomic_load(&helper_done) && stun_tries >= 8)
             snprintf(out, size, T("Adresse publique introuvable : ouvre le port UDP 47617 sur ta box"));
@@ -975,7 +1085,8 @@ void netplay_status(char *out, size_t size) {
         break;
     }
     case NET_SENDING:
-        snprintf(out, size, resyncing ? T("Resynchronisation du joueur %d...") : T("Arriv\xC3\xA9" "e du joueur %d : envoi de la partie..."),
+        if (boot_start) snprintf(out, size, T("Arriv\xC3\xA9" "e du joueur %d : d\xC3\xA9part ensemble..."), sending_slot + 1);
+        else snprintf(out, size, resyncing ? T("Resynchronisation du joueur %d...") : T("Arriv\xC3\xA9" "e du joueur %d : envoi de la partie..."),
                  sending_slot + 1);
         break;
     case NET_JOINING: snprintf(out, size, T("Connexion \xC3\xA0 l'h\xC3\xB4te...")); break;

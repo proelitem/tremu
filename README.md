@@ -30,6 +30,20 @@ et les GunCon, qui ne sont pas des périphériques HID, ne sont pas vus ; en VR 
 manette Touch montée sur l'arme qui vise, un pistolet externe n'apporte que ses boutons (voir
 `src/extgun.c`). Une partie en réseau n'emmène que le joueur 1 de chaque casque.
 
+## Jeu en réseau
+
+Les casques font tourner le même jeu image par image ; seules les commandes circulent (`src/netplay.c`).
+Un joueur qui rejoint reçoit une copie de la partie de l'hôte, sauf pour les jeux MAME : leurs
+sauvegardes d'état ne contiennent pas tout le jeu (mesuré sur Area 51 et CarnEvil, une copie s'écarte
+de l'hôte en quelques secondes). Pour MAME, « Héberger » relance le jeu à zéro et l'hôte attend le
+joueur 2 ; les deux casques démarrent ensemble une machine neuve (dossier `saves/netplay`, sans les
+NVRAM ni les meilleurs scores du casque). Les casques comparent l'image toutes les secondes (la
+mémoire pour les cœurs GPU) ; trois écarts de suite comptent comme une désynchronisation.
+Chaque casque écrit son journal réseau dans `Tremu/netplay.log`.
+
+Banc d'essai sans casque sur la tête (`test/nettest.c`, `_tools/nettest.ps1`) : `replay` dit si une
+copie de partie reste exacte, `host` et `guest` font jouer deux processus ensemble sur un même Quest.
+
 ## Fichiers du joueur
 
 - Jeux, mises à jour et DLC : `Download/Roms/<console>` sur le casque.
