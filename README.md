@@ -4,6 +4,10 @@
 
 Tremu ne fournit ni jeux, ni BIOS, ni clés, ni liens de téléchargement : le joueur apporte ses propres fichiers.
 
+**Installation** (casque, applications compagnes PS3 / Wii U / PS Vita, pistolet, jeu à plusieurs) :
+[Français](docs/install/fr.md) · [English](docs/install/en.md) · [Deutsch](docs/install/de.md) ·
+[Español](docs/install/es.md) · [日本語](docs/install/ja.md) · [Русский](docs/install/ru.md) · [中文](docs/install/zh.md)
+
 ## Manettes
 
 Les manettes Touch sont toujours le joueur 1 (pistolet ou pad selon le jeu, voir le menu « commandes

@@ -62,12 +62,26 @@ Tous sont dans l'APK, sauf indication contraire. « Modifié » signifie que nou
 | PSP | PPSSPP | [hrydgard/ppsspp](https://github.com/hrydgard/ppsspp) | 659e05c | GPL v2 ou ultérieure ; fichiers de données et polices sous leurs propres licences (`LICENSE.TXT` fourni avec les données) | Oui : serveur ad hoc relayé |
 | Xbox | xemu, via [X1 BOX](https://github.com/WinDroidEmulation/x1-box) | [xemu-project/xemu](https://github.com/xemu-project/xemu) | 4eed5f7 | GPL v2 | Oui : cœur libretro, pistolet, démarrage sans interface Java |
 | Xbox 360 | Xenia, via [XenDroid](https://github.com/rfandango/XenDroid) | [xenia-project/xenia](https://github.com/xenia-project/xenia) | 1085d9f | BSD 3 clauses, copyright (c) 2015 Ben Vanik (`licenses/xenia.txt`) | Oui : cœur libretro, relief par œil |
-| PS Vita | Vita3K, application séparée | [Vita3K/Vita3K](https://github.com/Vita3K/Vita3K) | 66ddb35 | GPL v2 | Oui : lancement par Tremu, manette |
-| Wii U | Cemu Android, application séparée | [SSimco/Cemu](https://github.com/SSimco/Cemu), d'après [cemu-project/Cemu](https://github.com/cemu-project/Cemu) | 8759323 | MPL 2.0 | Oui : mode immersif OpenXR, manettes Touch |
+| PS Vita | Vita3K, application séparée | [proelitem/Vita3K](https://github.com/proelitem/Vita3K) (branche `tremu`), d'après [Vita3K/Vita3K](https://github.com/Vita3K/Vita3K) 66ddb35 | c01da08 | GPL v2 | Oui : écran OpenXR, manettes Touch, lancement par Tremu |
+| Wii U | Cemu Android, application séparée | [proelitem/Cemu](https://github.com/proelitem/Cemu) (branche `tremu`), d'après [SSimco/Cemu](https://github.com/SSimco/Cemu) 8759323 et [cemu-project/Cemu](https://github.com/cemu-project/Cemu) | 2d923b4 | MPL 2.0 | Oui : mode immersif OpenXR, manettes Touch, lancement par Tremu |
+| PS3 | ARMSX3, application séparée | [proelitem/ARMSX3](https://github.com/proelitem/ARMSX3) (branche `master`), d'après [ARMSX2/ARMSX3](https://github.com/ARMSX2/ARMSX3) 1.6.5 | 61724ad77 | GPL v2 | Oui : écran OpenXR, pistolet Touch (GunCon 3, PS Move), lancement par Tremu et retour |
 
 Les cœurs sans modification viennent de la compilation du buildbot libretro (https://buildbot.libretro.com/) pour Android arm64.
 
-PS3 (ARMSX3) et le Wonderfitter officiel sont des applications tierces lancées par Tremu, non incluses.
+## Applications compagnes
+
+Tremu lance ces applications pour les consoles qu'il n'émule pas lui-même. Il faut **nos** versions :
+les originales n'acceptent pas le jeu envoyé par Tremu ni le retour au carrousel. Chacune est un fork
+public, sous la licence de son projet d'origine.
+
+| Application | Paquet | Dépôt | Rôle |
+|---|---|---|---|
+| ARMSX3 (PS3) | `com.armsx3` | [proelitem/ARMSX3](https://github.com/proelitem/ARMSX3) | Jeux PS3 |
+| Cemu (Wii U) | `info.cemu.cemu` | [proelitem/Cemu](https://github.com/proelitem/Cemu), branche `tremu` | Jeux Wii U |
+| Vita3K (PS Vita) | `org.vita3k.emulator` | [proelitem/Vita3K](https://github.com/proelitem/Vita3K), branche `tremu` | Jeux PS Vita |
+| Time Crisis VR | `org.timecrisis.quest` | [proelitem/time-crisis-vr](https://github.com/proelitem/time-crisis-vr), branche `wonderfitter-m17` | Time Crisis en VR native, pistolet WonderFitter |
+
+L'application Wonderfitter officielle n'est pas nécessaire : Tremu parle lui-même au pistolet en Bluetooth.
 
 ## Données incluses dans l'APK
 
