@@ -2,7 +2,12 @@
 
 Reuses the Android toolchain that time-crisis-vr's bootstrap downloaded into its .tools folder.
 Usage: python build.py [--install] [--sync] [--rom game.zip [--rom cchip.zip ...]]
-  --sync  copies this folder's Roms/, Banner/ and bios/ to Tremu/ on the Quest
+       python build.py --release          (public build, see docs/release.md)
+  --sync     copies this folder's Roms/, Banner/ and bios/ to Tremu/ on the Quest
+  --release  not debuggable, signed with the release key: TREMU_KEYSTORE (path), TREMU_KEY_ALIAS
+             (default "tremu") and TREMU_KEYSTORE_PASS (read by apksigner from the environment, never
+             written anywhere); refuses uncommitted changes, so the APK matches a published commit.
+The version is in the VERSION file (major.minor.patch); versionCode = major*10000 + minor*100 + patch.
 """
 import argparse, os, shutil, subprocess, sys, zipfile
 from pathlib import Path
@@ -100,8 +105,67 @@ def zip_folder(source, target):
                 z.write(f, f.relative_to(source).as_posix())
 
 
-def package():
-    base, aligned, signed = BUILD / 'base.apk', BUILD / 'aligned.apk', BUILD / 'tremu.apk'
+def version():
+    """VERSION file: "major.minor.patch" -> (versionName, versionCode)."""
+    name = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
+    major, minor, patch = (int(x) for x in name.split('.'))
+    if not (0 <= minor < 100 and 0 <= patch < 100):
+        sys.exit(f'VERSION {name}: minor and patch must stay below 100')
+    return name, major * 10000 + minor * 100 + patch
+
+
+def git_commit(release):
+    """The commit the APK is built from; a release needs a clean tree (its source must be that commit)."""
+    def git(*args):
+        return subprocess.run(['git', '-C', str(ROOT), *args], capture_output=True, text=True).stdout.strip()
+    commit = git('rev-parse', '--short', 'HEAD')
+    dirty = git('status', '--porcelain', '--untracked-files=no')
+    if release and dirty:
+        sys.exit('Release: commit your changes first, the published source must match the APK:\n' + dirty)
+    return commit + ('-dirty' if dirty else '')
+
+
+def manifest(release):
+    """The manifest as built: a release is not debuggable (tests use run-as on debug builds)."""
+    text = (ROOT / 'AndroidManifest.xml').read_text(encoding='utf-8')
+    if release:
+        if 'android:debuggable="true"' not in text:
+            sys.exit('AndroidManifest.xml: android:debuggable="true" not found')
+        text = text.replace('android:debuggable="true"', 'android:debuggable="false"')
+    out = BUILD / 'AndroidManifest.xml'
+    out.write_text(text, encoding='utf-8')
+    return out
+
+
+def release_key():
+    key = os.environ.get('TREMU_KEYSTORE')
+    if not key or not Path(key).is_file() or not os.environ.get('TREMU_KEYSTORE_PASS'):
+        sys.exit('Release: set TREMU_KEYSTORE (the release keystore) and TREMU_KEYSTORE_PASS (see docs/release.md)')
+    return key, os.environ.get('TREMU_KEY_ALIAS', 'tremu')
+
+
+def sign(aligned, signed, release):
+    if not release:
+        key = ROOT / 'debug.keystore'
+        if not key.exists():
+            run(JDK / 'bin/keytool.exe', '-genkeypair', '-keystore', key, '-storepass', 'android', '-alias', 'tremu',
+                '-keypass', 'android', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=Tremu')
+        run(JDK / 'bin/java.exe', '-jar', BT / 'lib/apksigner.jar', 'sign', '--ks', key, '--ks-pass', 'pass:android',
+            '--out', signed, aligned)
+        return
+    key, alias = release_key()
+    # env: makes apksigner read the password itself; it never appears on a command line or in a log.
+    run(JDK / 'bin/java.exe', '-jar', BT / 'lib/apksigner.jar', 'sign', '--ks', key, '--ks-key-alias', alias,
+        '--ks-pass', 'env:TREMU_KEYSTORE_PASS', '--out', signed, aligned)
+    run(JDK / 'bin/java.exe', '-jar', BT / 'lib/apksigner.jar', 'verify', '--print-certs', signed)
+
+
+def package(release=False):
+    name, code = version()
+    commit = git_commit(release)
+    base, aligned = BUILD / 'base.apk', BUILD / 'aligned.apk'
+    signed = BUILD / (f'tremu-{name}.apk' if release else 'tremu.apk')
+    print(f'Tremu {name} (versionCode {code}) from commit {commit}' + (', release' if release else ', debug'), flush=True)
     classes_dex = dex()
     # Launcher icon from the branding folder.
     res = BUILD / 'res' / 'mipmap'
@@ -124,8 +188,10 @@ def package():
     # files/drivers/<name>/ before an Xbox 360 game.
     for driver in sorted((ROOT / 'third_party' / 'turnip').glob('*.zip')):
         shutil.copy2(driver, assets / f'turnip-{driver.name}')
-    run(BT / 'aapt2.exe', 'link', '--manifest', ROOT / 'AndroidManifest.xml', '-I', ANDROID_JAR, '-R', BUILD / 'res.zip',
-        '-A', assets, '-o', base)
+    # Build info for the curious and for bug reports (which commit an APK is).
+    (assets / 'build.txt').write_text(f'{name}\n{code}\n{commit}\n{"release" if release else "debug"}\n', encoding='utf-8')
+    run(BT / 'aapt2.exe', 'link', '--manifest', manifest(release), '-I', ANDROID_JAR, '-R', BUILD / 'res.zip',
+        '-A', assets, '-o', base, '--version-code', str(code), '--version-name', name, '--replace-version')
     strip = NDK / 'toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe'
     with zipfile.ZipFile(base, 'a', zipfile.ZIP_DEFLATED) as z:
         z.write(classes_dex, 'classes.dex')
@@ -138,12 +204,7 @@ def package():
                 run(strip, '--strip-unneeded', staged)
             z.write(staged, 'lib/arm64-v8a/' + name)
     run(BT / 'zipalign.exe', '-f', '-P', '16', '4', base, aligned)
-    key = ROOT / 'debug.keystore'
-    if not key.exists():
-        run(JDK / 'bin/keytool.exe', '-genkeypair', '-keystore', key, '-storepass', 'android', '-alias', 'tremu',
-            '-keypass', 'android', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=Tremu')
-    run(JDK / 'bin/java.exe', '-jar', BT / 'lib/apksigner.jar', 'sign', '--ks', key, '--ks-pass', 'pass:android',
-        '--out', signed, aligned)
+    sign(aligned, signed, release)
     print(f'Built {signed} ({signed.stat().st_size / 1e6:.1f} MB)')
     return signed
 
@@ -185,10 +246,14 @@ if __name__ == '__main__':
     # Repeat for a game and its support archives, e.g. --rom opwolf.zip --rom cchip.zip
     p.add_argument('--rom', type=Path, action='append', default=[])
     p.add_argument('--sync', action='store_true')
+    p.add_argument('--release', action='store_true')
     args = p.parse_args()
     BUILD.mkdir(exist_ok=True)
+    if args.release:  # before the long native build
+        release_key()
+        git_commit(True)
     native()
-    apk = package()
+    apk = package(args.release)
     if args.install:
         install(apk, args.rom)
     if args.sync:
