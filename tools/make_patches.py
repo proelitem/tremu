@@ -37,7 +37,10 @@ def git(folder, *args, binary=False):
 
 
 def base_commit(folder):
-    for ref in ('origin/HEAD', 'origin/master', 'origin/main', 'upstream/master', 'upstream/main', 'origin/android-port'):
+    # A clone whose origin is our fork (Cemu, Vita3K) keeps the original project as "upstream": that
+    # comes first, or the diff would be against our own published branch and come out empty.
+    for ref in ('upstream/HEAD', 'upstream/master', 'upstream/main', 'upstream/android-port',
+                'origin/HEAD', 'origin/master', 'origin/main', 'origin/android-port'):
         base = git(folder, 'merge-base', 'HEAD', ref).strip()
         if base:
             return base

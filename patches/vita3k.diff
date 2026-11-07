@@ -165,198 +165,9 @@ index 5a5fb98..f178d24 100644
      public void requestNativeQuit() {
          runOnUiThread(() -> {
              try {
-diff --git a/vita3k/CMakeLists.txt b/vita3k/CMakeLists.txt
-index 4d825d6..8c5f155 100644
---- a/vita3k/CMakeLists.txt
-+++ b/vita3k/CMakeLists.txt
-@@ -167,12 +167,16 @@ if(ANDROID)
- 		android/jni/native_install.cpp
- 		android/jni/native_session.cpp
- 		android/jni/input_overlay.cpp
-+		android/jni/native_xr.cpp
- 		android/jni/ime.cpp
- 		interface.cpp
- 		performance.cpp
- 	)
- 	target_include_directories(vita3k PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
- 	target_link_libraries(vita3k PRIVATE SDL3::SDL3 pugixml::pugixml android)
-+	set(OPENXR_DIR "G:/Projets/WFVR/time-crisis-vr/.tools/openxr/prefab/modules")
-+	target_include_directories(vita3k PRIVATE "${OPENXR_DIR}/headers/include")
-+	target_link_libraries(vita3k PRIVATE "${OPENXR_DIR}/openxr_loader/libs/android.arm64-v8a/libopenxr_loader.so" EGL GLESv3)
- 
- 	if(CMAKE_BUILD_TYPE STREQUAL "Release")
- 		# we need to exclude all symbols except SDL
-diff --git a/vita3k/android/jni/android_state.h b/vita3k/android/jni/android_state.h
-index a99ec1e..12a1b83 100644
---- a/vita3k/android/jni/android_state.h
-+++ b/vita3k/android/jni/android_state.h
-@@ -61,6 +61,9 @@ std::optional<app::AppEntry> find_app_by_title_id(const std::string &title_id);
- bool remove_path_if_exists(const fs::path &path);
- void attach_overlay_virtual_controller();
- void detach_overlay_virtual_controller();
-+bool overlay_virtual_controller_attached();
-+void overlay_set_button(int button, bool value);
-+void overlay_set_axis(int axis, int16_t value);
- 
- enum AppActionMask : uint32_t {
-     ACTION_DELETE_APPLICATION = 1u << 0,
-diff --git a/vita3k/android/jni/input_overlay.cpp b/vita3k/android/jni/input_overlay.cpp
-index c76dc78..2248492 100644
---- a/vita3k/android/jni/input_overlay.cpp
-+++ b/vita3k/android/jni/input_overlay.cpp
-@@ -76,6 +76,20 @@ void attach_overlay_virtual_controller() {
-     refresh_overlay_controllers();
- }
- 
-+bool overlay_virtual_controller_attached() {
-+    return virtual_joystick != nullptr;
-+}
-+
-+void overlay_set_button(int button, bool value) {
-+    if (virtual_joystick)
-+        SDL_SetJoystickVirtualButton(virtual_joystick, button, value);
-+}
-+
-+void overlay_set_axis(int axis, int16_t value) {
-+    if (virtual_joystick)
-+        SDL_SetJoystickVirtualAxis(virtual_joystick, axis, value);
-+}
-+
- extern "C" {
- 
- JNIEXPORT void JNICALL
-diff --git a/vita3k/config/include/config/config.h b/vita3k/config/include/config/config.h
-index 18a578c..7c690fa 100644
---- a/vita3k/config/include/config/config.h
-+++ b/vita3k/config/include/config/config.h
-@@ -145,7 +145,7 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
-     code(bool, "fullscreen_hd_res_pixel_perfect", false, fullscreen_hd_res_pixel_perfect)               \
-     code(bool, "archive-log", false, archive_log)                                                       \
-     code(std::string, "backend-renderer", "Vulkan", backend_renderer)                                   \
--    code(std::string, "custom-driver-name", "", custom_driver_name)                                     \
-+    code(std::string, "custom-driver-name", "Tremu-Turnip", custom_driver_name)                                     \
-     code(bool, "turbo-mode", false, turbo_mode)                                                         \
-     code(int, "gpu-idx", 0, gpu_idx)                                                                    \
-     code(bool, "high-accuracy", false, high_accuracy)                                                   \
-@@ -176,7 +176,7 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
-     code(int, "delay-background", 4, delay_background)                                                  \
-     code(int, "delay-start", 30, delay_start)                                                           \
-     code(float, "background-alpha", .300f, background_alpha)                                            \
--    code(int, "log-level", 0 /*SPDLOG_LEVEL_TRACE*/, log_level)                                         \
-+    code(int, "log-level", 2 /*SPDLOG_LEVEL_INFO*/, log_level)                                          \
-     code(bool, "cpu-opt", true, cpu_opt)                                                                \
-     code(std::string, "pref-path", std::string{}, vita_fs_path)                                         \
-     code(bool, "discord-rich-presence", true, discord_rich_presence)                                    \
-diff --git a/vita3k/modules/SceCommonDialog/SceCommonDialog.cpp b/vita3k/modules/SceCommonDialog/SceCommonDialog.cpp
-index 1bdd87a..9fd914d 100644
---- a/vita3k/modules/SceCommonDialog/SceCommonDialog.cpp
-+++ b/vita3k/modules/SceCommonDialog/SceCommonDialog.cpp
-@@ -17,6 +17,11 @@
- 
- #include <module/module.h>
- 
-+#ifdef __ANDROID__
-+#include <sys/system_properties.h>
-+#endif
-+#include <cstdlib>
-+
- #include <dialog/state.h>
- #include <dialog/types.h>
- #include <emuenv/app_util.h>
-@@ -104,6 +109,36 @@ EXPORT(int, sceCommonDialog_B7D4C911) {
-     return 2;
- }
- 
-+// An online account dialog of Killzone Mercenary, name unknown (Init, GetResult, Term, Abort around
-+// B7D4C911, GetStatus). Without them the game reads a result from uninitialized stack and waits for ever.
-+// The dialog finishes at once, canceled: there is no account service here.
-+EXPORT(int, sceCommonDialog_33626E2C, const void *param) {
-+    STUBBED("Finished at once");
-+    return 0;
-+}
-+
-+EXPORT(int, sceCommonDialog_B55CF0E3) {
-+    return 0;
-+}
-+
-+EXPORT(int, sceCommonDialog_BEBAEF25) {
-+    return 0;
-+}
-+
-+EXPORT(int, sceCommonDialog_D1858A78, uint32_t *result) {
-+    // The game switches on result[1], values 0 to 3 whose meaning is not known yet.
-+    int choice = 0;
-+#ifdef __ANDROID__
-+    char value[PROP_VALUE_MAX] = {};
-+    if (__system_property_get("debug.vita3k.dialogresult", value) > 0)
-+        choice = atoi(value);
-+#endif
-+    LOG_INFO("Account dialog answered canceled, choice {}", choice);
-+    result[0] = SCE_COMMON_DIALOG_RESULT_USER_CANCELED;
-+    result[1] = choice;
-+    return 0;
-+}
-+
- EXPORT(int, sceCommonDialogGetWorkerThreadId) {
-     TRACY_FUNC(sceCommonDialogGetWorkerThreadId);
-     return UNIMPLEMENTED();
-diff --git a/vita3k/nids/include/nids/nids.inc b/vita3k/nids/include/nids/nids.inc
-index 537d8fb..1199583 100644
---- a/vita3k/nids/include/nids/nids.inc
-+++ b/vita3k/nids/include/nids/nids.inc
-@@ -817,6 +817,10 @@ NID(sceCameraImportDialogGetStatus, 0x86AE7314)
- NID(sceCameraImportDialogInit, 0xE525BDB0)
- NID(sceCameraImportDialogTerm, 0x8ED0C83C)
- NID(sceCommonDialog_B7D4C911, 0xB7D4C911)
-+NID(sceCommonDialog_33626E2C, 0x33626E2C)
-+NID(sceCommonDialog_B55CF0E3, 0xB55CF0E3)
-+NID(sceCommonDialog_BEBAEF25, 0xBEBAEF25)
-+NID(sceCommonDialog_D1858A78, 0xD1858A78)
- NID(sceCommonDialogGetWorkerThreadId, 0xD4C37375)
- NID(sceCommonDialogIsRunning, 0x043A353E)
- NID(sceCommonDialogSetConfigParam, 0xBECD35C8)
-diff --git a/vita3k/renderer/src/texture/cache.cpp b/vita3k/renderer/src/texture/cache.cpp
-index 955648e..c592d93 100644
---- a/vita3k/renderer/src/texture/cache.cpp
-+++ b/vita3k/renderer/src/texture/cache.cpp
-@@ -15,6 +15,7 @@
- // with this program; if not, write to the Free Software Foundation, Inc.,
- // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- 
-+#include <mem/functions.h>
- #include <renderer/functions.h>
- 
- #include <renderer/profile.h>
-@@ -540,6 +541,15 @@ void TextureCache::upload_texture(const SceGxmTexture &gxm_texture, MemState &me
-         }
- 
-         if (texture_type != SCE_GXM_TEXTURE_LINEAR && texture_type != SCE_GXM_TEXTURE_LINEAR_STRIDED && !gxm::is_pvrt_format(base_format)) {
-+            // Killzone Mercenary binds a texture whose data runs past its memory block: the read below
-+            // crashed the emulator. Keep what was uploaded so far instead.
-+            const Address source = data.address() + total_source_so_far;
-+            const uint32_t source_size = (static_cast<uint64_t>(pixels_per_stride) * memory_height * bpp) / 8;
-+            if (pixels == texture_data && !is_valid_addr_range(mem, source, source + source_size)) {
-+                LOG_ERROR_ONCE("Texture data at 0x{:X} ({} bytes) runs past its memory, skipped", source, source_size);
-+                break;
-+            }
-+
-             // Convert data to linear layout
-             texture_pixels_lineared.resize(pixels_per_stride * memory_height * bytes_per_pixel);
- 
-diff --git a/vita3k/renderer/src/vulkan/renderer.cpp b/vita3k/renderer/src/vulkan/renderer.cpp
-index 0cf29e2..6a73375 100644
---- a/vita3k/renderer/src/vulkan/renderer.cpp
-+++ b/vita3k/renderer/src/vulkan/renderer.cpp
-@@ -732,6 +732,7 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
-             support_standard_layout &= static_cast<bool>(features.get<vk::PhysicalDeviceUniformBufferStandardLayoutFeatures>().uniformBufferStandardLayout);
-         }
-         support_memory_mapping &= support_standard_layout;
-+        LOG_INFO("Memory mapping needs: buffer device address {}, uniform standard layout {}", support_buffer_device_address, support_standard_layout);
- 
- #ifdef __APPLE__
-         // we need to make a copy of the vertex buffer for moltenvk, so disable memory mapping
 diff --git a/android/app/src/main/java/org/vita3k/emulator/NativeXr.java b/android/app/src/main/java/org/vita3k/emulator/NativeXr.java
 new file mode 100644
+index 0000000..b9c810e
 --- /dev/null
 +++ b/android/app/src/main/java/org/vita3k/emulator/NativeXr.java
 @@ -0,0 +1,15 @@
@@ -377,6 +188,7 @@ new file mode 100644
 +}
 diff --git a/android/app/src/main/java/org/vita3k/emulator/TremuLaunchActivity.java b/android/app/src/main/java/org/vita3k/emulator/TremuLaunchActivity.java
 new file mode 100644
+index 0000000..89cc4b9
 --- /dev/null
 +++ b/android/app/src/main/java/org/vita3k/emulator/TremuLaunchActivity.java
 @@ -0,0 +1,141 @@
@@ -521,8 +333,80 @@ new file mode 100644
 +        }
 +    }
 +}
+diff --git a/vita3k/CMakeLists.txt b/vita3k/CMakeLists.txt
+index 4d825d6..2ec81b7 100644
+--- a/vita3k/CMakeLists.txt
++++ b/vita3k/CMakeLists.txt
+@@ -167,12 +167,27 @@ if(ANDROID)
+ 		android/jni/native_install.cpp
+ 		android/jni/native_session.cpp
+ 		android/jni/input_overlay.cpp
++		android/jni/native_xr.cpp
+ 		android/jni/ime.cpp
+ 		interface.cpp
+ 		performance.cpp
+ 	)
+ 	target_include_directories(vita3k PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+ 	target_link_libraries(vita3k PRIVATE SDL3::SDL3 pugixml::pugixml android)
++	# Khronos OpenXR loader for Android (the "prefab/modules" folder of its AAR), for the Quest's
++	# OpenXR session (android/jni/native_xr.cpp). Set OPENXR_DIR in the environment or with -DOPENXR_DIR=...
++	if(NOT OPENXR_DIR)
++		if(DEFINED ENV{OPENXR_DIR})
++			set(OPENXR_DIR "$ENV{OPENXR_DIR}")
++		else()
++			set(OPENXR_DIR "G:/Projets/WFVR/time-crisis-vr/.tools/openxr/prefab/modules") # Tremu's build PC
++		endif()
++	endif()
++	if(NOT EXISTS "${OPENXR_DIR}/headers/include/openxr/openxr.h")
++		message(FATAL_ERROR "OpenXR loader not found in OPENXR_DIR=${OPENXR_DIR}")
++	endif()
++	target_include_directories(vita3k PRIVATE "${OPENXR_DIR}/headers/include")
++	target_link_libraries(vita3k PRIVATE "${OPENXR_DIR}/openxr_loader/libs/android.arm64-v8a/libopenxr_loader.so" EGL GLESv3)
+ 
+ 	if(CMAKE_BUILD_TYPE STREQUAL "Release")
+ 		# we need to exclude all symbols except SDL
+diff --git a/vita3k/android/jni/android_state.h b/vita3k/android/jni/android_state.h
+index a99ec1e..12a1b83 100644
+--- a/vita3k/android/jni/android_state.h
++++ b/vita3k/android/jni/android_state.h
+@@ -61,6 +61,9 @@ std::optional<app::AppEntry> find_app_by_title_id(const std::string &title_id);
+ bool remove_path_if_exists(const fs::path &path);
+ void attach_overlay_virtual_controller();
+ void detach_overlay_virtual_controller();
++bool overlay_virtual_controller_attached();
++void overlay_set_button(int button, bool value);
++void overlay_set_axis(int axis, int16_t value);
+ 
+ enum AppActionMask : uint32_t {
+     ACTION_DELETE_APPLICATION = 1u << 0,
+diff --git a/vita3k/android/jni/input_overlay.cpp b/vita3k/android/jni/input_overlay.cpp
+index c76dc78..2248492 100644
+--- a/vita3k/android/jni/input_overlay.cpp
++++ b/vita3k/android/jni/input_overlay.cpp
+@@ -76,6 +76,20 @@ void attach_overlay_virtual_controller() {
+     refresh_overlay_controllers();
+ }
+ 
++bool overlay_virtual_controller_attached() {
++    return virtual_joystick != nullptr;
++}
++
++void overlay_set_button(int button, bool value) {
++    if (virtual_joystick)
++        SDL_SetJoystickVirtualButton(virtual_joystick, button, value);
++}
++
++void overlay_set_axis(int axis, int16_t value) {
++    if (virtual_joystick)
++        SDL_SetJoystickVirtualAxis(virtual_joystick, axis, value);
++}
++
+ extern "C" {
+ 
+ JNIEXPORT void JNICALL
 diff --git a/vita3k/android/jni/native_xr.cpp b/vita3k/android/jni/native_xr.cpp
 new file mode 100644
+index 0000000..46dc1fb
 --- /dev/null
 +++ b/vita3k/android/jni/native_xr.cpp
 @@ -0,0 +1,560 @@
@@ -1086,3 +970,133 @@ new file mode 100644
 +    s_startDone.wait(lock, [] { return s_startFinished; });
 +    return s_surface;
 +}
+diff --git a/vita3k/config/include/config/config.h b/vita3k/config/include/config/config.h
+index 18a578c..7c690fa 100644
+--- a/vita3k/config/include/config/config.h
++++ b/vita3k/config/include/config/config.h
+@@ -145,7 +145,7 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
+     code(bool, "fullscreen_hd_res_pixel_perfect", false, fullscreen_hd_res_pixel_perfect)               \
+     code(bool, "archive-log", false, archive_log)                                                       \
+     code(std::string, "backend-renderer", "Vulkan", backend_renderer)                                   \
+-    code(std::string, "custom-driver-name", "", custom_driver_name)                                     \
++    code(std::string, "custom-driver-name", "Tremu-Turnip", custom_driver_name)                                     \
+     code(bool, "turbo-mode", false, turbo_mode)                                                         \
+     code(int, "gpu-idx", 0, gpu_idx)                                                                    \
+     code(bool, "high-accuracy", false, high_accuracy)                                                   \
+@@ -176,7 +176,7 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
+     code(int, "delay-background", 4, delay_background)                                                  \
+     code(int, "delay-start", 30, delay_start)                                                           \
+     code(float, "background-alpha", .300f, background_alpha)                                            \
+-    code(int, "log-level", 0 /*SPDLOG_LEVEL_TRACE*/, log_level)                                         \
++    code(int, "log-level", 2 /*SPDLOG_LEVEL_INFO*/, log_level)                                          \
+     code(bool, "cpu-opt", true, cpu_opt)                                                                \
+     code(std::string, "pref-path", std::string{}, vita_fs_path)                                         \
+     code(bool, "discord-rich-presence", true, discord_rich_presence)                                    \
+diff --git a/vita3k/modules/SceCommonDialog/SceCommonDialog.cpp b/vita3k/modules/SceCommonDialog/SceCommonDialog.cpp
+index 1bdd87a..9fd914d 100644
+--- a/vita3k/modules/SceCommonDialog/SceCommonDialog.cpp
++++ b/vita3k/modules/SceCommonDialog/SceCommonDialog.cpp
+@@ -17,6 +17,11 @@
+ 
+ #include <module/module.h>
+ 
++#ifdef __ANDROID__
++#include <sys/system_properties.h>
++#endif
++#include <cstdlib>
++
+ #include <dialog/state.h>
+ #include <dialog/types.h>
+ #include <emuenv/app_util.h>
+@@ -104,6 +109,36 @@ EXPORT(int, sceCommonDialog_B7D4C911) {
+     return 2;
+ }
+ 
++// An online account dialog of Killzone Mercenary, name unknown (Init, GetResult, Term, Abort around
++// B7D4C911, GetStatus). Without them the game reads a result from uninitialized stack and waits for ever.
++// The dialog finishes at once, canceled: there is no account service here.
++EXPORT(int, sceCommonDialog_33626E2C, const void *param) {
++    STUBBED("Finished at once");
++    return 0;
++}
++
++EXPORT(int, sceCommonDialog_B55CF0E3) {
++    return 0;
++}
++
++EXPORT(int, sceCommonDialog_BEBAEF25) {
++    return 0;
++}
++
++EXPORT(int, sceCommonDialog_D1858A78, uint32_t *result) {
++    // The game switches on result[1], values 0 to 3 whose meaning is not known yet.
++    int choice = 0;
++#ifdef __ANDROID__
++    char value[PROP_VALUE_MAX] = {};
++    if (__system_property_get("debug.vita3k.dialogresult", value) > 0)
++        choice = atoi(value);
++#endif
++    LOG_INFO("Account dialog answered canceled, choice {}", choice);
++    result[0] = SCE_COMMON_DIALOG_RESULT_USER_CANCELED;
++    result[1] = choice;
++    return 0;
++}
++
+ EXPORT(int, sceCommonDialogGetWorkerThreadId) {
+     TRACY_FUNC(sceCommonDialogGetWorkerThreadId);
+     return UNIMPLEMENTED();
+diff --git a/vita3k/nids/include/nids/nids.inc b/vita3k/nids/include/nids/nids.inc
+index 537d8fb..1199583 100644
+--- a/vita3k/nids/include/nids/nids.inc
++++ b/vita3k/nids/include/nids/nids.inc
+@@ -817,6 +817,10 @@ NID(sceCameraImportDialogGetStatus, 0x86AE7314)
+ NID(sceCameraImportDialogInit, 0xE525BDB0)
+ NID(sceCameraImportDialogTerm, 0x8ED0C83C)
+ NID(sceCommonDialog_B7D4C911, 0xB7D4C911)
++NID(sceCommonDialog_33626E2C, 0x33626E2C)
++NID(sceCommonDialog_B55CF0E3, 0xB55CF0E3)
++NID(sceCommonDialog_BEBAEF25, 0xBEBAEF25)
++NID(sceCommonDialog_D1858A78, 0xD1858A78)
+ NID(sceCommonDialogGetWorkerThreadId, 0xD4C37375)
+ NID(sceCommonDialogIsRunning, 0x043A353E)
+ NID(sceCommonDialogSetConfigParam, 0xBECD35C8)
+diff --git a/vita3k/renderer/src/texture/cache.cpp b/vita3k/renderer/src/texture/cache.cpp
+index 955648e..c592d93 100644
+--- a/vita3k/renderer/src/texture/cache.cpp
++++ b/vita3k/renderer/src/texture/cache.cpp
+@@ -15,6 +15,7 @@
+ // with this program; if not, write to the Free Software Foundation, Inc.,
+ // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ 
++#include <mem/functions.h>
+ #include <renderer/functions.h>
+ 
+ #include <renderer/profile.h>
+@@ -540,6 +541,15 @@ void TextureCache::upload_texture(const SceGxmTexture &gxm_texture, MemState &me
+         }
+ 
+         if (texture_type != SCE_GXM_TEXTURE_LINEAR && texture_type != SCE_GXM_TEXTURE_LINEAR_STRIDED && !gxm::is_pvrt_format(base_format)) {
++            // Killzone Mercenary binds a texture whose data runs past its memory block: the read below
++            // crashed the emulator. Keep what was uploaded so far instead.
++            const Address source = data.address() + total_source_so_far;
++            const uint32_t source_size = (static_cast<uint64_t>(pixels_per_stride) * memory_height * bpp) / 8;
++            if (pixels == texture_data && !is_valid_addr_range(mem, source, source + source_size)) {
++                LOG_ERROR_ONCE("Texture data at 0x{:X} ({} bytes) runs past its memory, skipped", source, source_size);
++                break;
++            }
++
+             // Convert data to linear layout
+             texture_pixels_lineared.resize(pixels_per_stride * memory_height * bytes_per_pixel);
+ 
+diff --git a/vita3k/renderer/src/vulkan/renderer.cpp b/vita3k/renderer/src/vulkan/renderer.cpp
+index 0cf29e2..6a73375 100644
+--- a/vita3k/renderer/src/vulkan/renderer.cpp
++++ b/vita3k/renderer/src/vulkan/renderer.cpp
+@@ -732,6 +732,7 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
+             support_standard_layout &= static_cast<bool>(features.get<vk::PhysicalDeviceUniformBufferStandardLayoutFeatures>().uniformBufferStandardLayout);
+         }
+         support_memory_mapping &= support_standard_layout;
++        LOG_INFO("Memory mapping needs: buffer device address {}, uniform standard layout {}", support_buffer_device_address, support_standard_layout);
+ 
+ #ifdef __APPLE__
+         // we need to make a copy of the vertex buffer for moltenvk, so disable memory mapping

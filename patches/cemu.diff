@@ -57,10 +57,10 @@ index 0cb9fba..c05819c 100644
                  <action android:name="android.intent.action.VIEW" />
  
 diff --git a/src/android/app/src/main/cpp/CMakeLists.txt b/src/android/app/src/main/cpp/CMakeLists.txt
-index f4ddc11..f3d9657 100644
+index f4ddc11..e8fda3b 100644
 --- a/src/android/app/src/main/cpp/CMakeLists.txt
 +++ b/src/android/app/src/main/cpp/CMakeLists.txt
-@@ -17,9 +17,17 @@ add_library(CemuAndroid SHARED
+@@ -17,9 +17,28 @@ add_library(CemuAndroid SHARED
          NativeLogging.cpp
          NativeSettings.cpp
          NativeSwkbd.cpp
@@ -68,7 +68,18 @@ index f4ddc11..f3d9657 100644
          WuaConverter.cpp
  )
  
-+set(OPENXR_DIR "G:/Projets/WFVR/time-crisis-vr/.tools/openxr/prefab/modules")
++# The Khronos OpenXR loader for Android (the "prefab/modules" folder of its AAR), for the Quest's
++# OpenXR session (NativeXr.cpp). Set OPENXR_DIR in the environment or with -DOPENXR_DIR=...
++if(NOT OPENXR_DIR)
++    if(DEFINED ENV{OPENXR_DIR})
++        set(OPENXR_DIR "$ENV{OPENXR_DIR}")
++    else()
++        set(OPENXR_DIR "G:/Projets/WFVR/time-crisis-vr/.tools/openxr/prefab/modules")  # Tremu's build PC
++    endif()
++endif()
++if(NOT EXISTS "${OPENXR_DIR}/headers/include/openxr/openxr.h")
++    message(FATAL_ERROR "OpenXR loader not found in OPENXR_DIR=${OPENXR_DIR}")
++endif()
 +target_include_directories(CemuAndroid PRIVATE "${OPENXR_DIR}/headers/include")
 +target_link_libraries(CemuAndroid PRIVATE
 +        "${OPENXR_DIR}/openxr_loader/libs/android.arm64-v8a/libopenxr_loader.so"
@@ -134,319 +145,9 @@ index 82c1117..b76e235 100644
  		// the title might not be in the TitleList, so we add it as a temporary entry
  		CafeTitleList::AddTitleFromPath(launchPath);
  		// title is valid, launch from TitleId
-diff --git a/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt b/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt
-index f695707..76d437d 100644
---- a/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt
-+++ b/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt
-@@ -25,6 +25,7 @@ import info.cemu.cemu.common.ui.components.ActivityContent
- import info.cemu.cemu.common.ui.localization.TranslatableContent
- import info.cemu.cemu.emulation.EmulationActivity
- import info.cemu.cemu.games.GameListRoute
-+import info.cemu.cemu.common.android.context.requestAllFilesAccess
- import info.cemu.cemu.games.gamesNavigation
- import info.cemu.cemu.graphicpacks.GraphicPacksRoute
- import info.cemu.cemu.graphicpacks.graphicPacksNavigation
-@@ -58,6 +59,7 @@ class MainActivity : AppCompatActivity() {
- 
-     override fun onCreate(savedInstanceState: Bundle?) {
-         super.onCreate(savedInstanceState)
-+        requestAllFilesAccess()
-         setContent {
-             TranslatableContent {
-                 ActivityContent {
-diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt
-index 29a5c74..d88cf1d 100644
---- a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt
-+++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt
-@@ -14,6 +14,7 @@ import androidx.lifecycle.Lifecycle
- import androidx.lifecycle.lifecycleScope
- import androidx.lifecycle.repeatOnLifecycle
- import info.cemu.cemu.BuildConfig
-+import info.cemu.cemu.common.android.context.requestAllFilesAccess
- import info.cemu.cemu.common.android.inputevent.isFromPhysicalController
- import info.cemu.cemu.common.settings.AppSettingsStore
- import info.cemu.cemu.common.ui.components.ActivityContent
-@@ -25,6 +26,8 @@ import info.cemu.cemu.emulation.input.DeviceMotionHandler
- import info.cemu.cemu.emulation.input.HotkeyManager
- import info.cemu.cemu.emulation.input.InputHandler
- import info.cemu.cemu.emulation.input.NativeInputDeviceListener
-+import info.cemu.cemu.nativeinterface.NativeInput
-+import info.cemu.cemu.nativeinterface.NativeXr
- import kotlinx.coroutines.flow.distinctUntilChanged
- import kotlinx.coroutines.flow.map
- import kotlinx.coroutines.launch
-@@ -115,6 +118,18 @@ class EmulationActivity : AppCompatActivity() {
-     override fun onCreate(savedInstanceState: Bundle?) {
-         super.onCreate(savedInstanceState)
- 
-+        if (!requestAllFilesAccess()) {
-+            finish()
-+            return
-+        }
-+
-+        // A fresh install has no controller at all: the game would wait forever and the overlay stays empty.
-+        if (NativeInput.isControllerDisabled(0)) {
-+            NativeInput.setControllerType(0, NativeInput.EmulatedControllerType.VPAD)
-+        }
-+
-+        NativeXr.startSession(this)
-+
-         inputManager = InputDelegateManager(this)
- 
-         setupHotkeys()
-@@ -169,12 +184,20 @@ class EmulationActivity : AppCompatActivity() {
-         controller.hide(WindowInsetsCompat.Type.systemBars())
-     }
- 
-+    /** Called by the OpenXR thread: the left menu button was held, or the session ended. */
-+    @androidx.annotation.Keep
-+    fun onXrQuit() = runOnUiThread(::onQuit)
-+
-     private fun onQuit() {
-+        intent.getStringExtra(EXTRA_RETURN_PACKAGE)?.let { caller ->
-+            packageManager.getLaunchIntentForPackage(caller)?.let(::startActivity)
-+        }
-         finish()
-         exitProcess(0)
-     }
- 
-     companion object {
-         const val EXTRA_LAUNCH_PATH: String = BuildConfig.APPLICATION_ID + ".LaunchPath"
-+        const val EXTRA_RETURN_PACKAGE: String = BuildConfig.APPLICATION_ID + ".ReturnPackage"
-     }
- }
-diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt
-index 2a58ee0..7042fd3 100644
---- a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt
-+++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt
-@@ -68,6 +68,7 @@ import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.D
- import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.EDIT_POSITION
- import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.EDIT_SIZE
- import info.cemu.cemu.nativeinterface.NativeEmulation
-+import info.cemu.cemu.nativeinterface.NativeXr
- import kotlinx.coroutines.launch
- 
- @Composable
-@@ -90,6 +91,7 @@ fun EmulationScreen(
- 
-     val emulationError by viewModel.emulationError.collectAsState()
-     val isEmulationInitialized by viewModel.isEmulationInitialized.collectAsState()
-+    val isEmulationStarting by viewModel.isEmulationStarting.collectAsState()
-     val sideMenuState by viewModel.sideMenuState.collectAsState()
-     val gamePadPosition by viewModel.gamePadPosition.collectAsState()
-     val isInputOverlayVisible by viewModel.isInputOverlayVisible.collectAsState()
-@@ -126,6 +128,10 @@ fun EmulationScreen(
-         setInputListeningEnabled(drawerState.isClosed)
-     }
- 
-+    LaunchedEffect(Unit) {
-+        NativeXr.surface?.let(viewModel::useXrSurface)
-+    }
-+
-     LaunchedEffect(Unit) {
-         HotkeyManager.actions.collect { action ->
-             when (action) {
-@@ -221,10 +227,19 @@ fun EmulationScreen(
-     }
- 
-     emulationError?.let {
--        EmulationErrorDialog(it, onQuit)
-+        // A dialog is invisible during an OpenXR session: leave rather than show an empty screen.
-+        if (NativeXr.surface != null) {
-+            LaunchedEffect(it) {
-+                android.util.Log.e("CemuXr", "emulation error: $it")
-+                onQuit()
-+            }
-+        } else {
-+            EmulationErrorDialog(it, onQuit)
-+        }
-     }
- 
--    if (!isEmulationInitialized) {
-+    // Quest: a dialog window over the SurfaceView seems to keep its surface from being created.
-+    if (isEmulationStarting && !isEmulationInitialized) {
-         EmulationLoadingDialog()
-     }
- 
-@@ -396,7 +411,7 @@ private fun EmulationSurfaces(
-     padHolderCallback: SurfaceHolder.Callback,
-     onInitializeEmulation: () -> Unit
- ) {
--    if (gamePadPosition == null) {
-+    if (gamePadPosition == null || NativeXr.surface != null) {
-         return
-     }
- 
-diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt
-index e5c96ff..dbbb682 100644
---- a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt
-+++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt
-@@ -22,6 +22,7 @@ import info.cemu.cemu.common.settings.OverlayInputConfig
- import info.cemu.cemu.nativeinterface.NativeEmulation
- import info.cemu.cemu.nativeinterface.NativeEmulation.PrepareTitleResult
- import info.cemu.cemu.nativeinterface.NativeException
-+import info.cemu.cemu.nativeinterface.NativeXr
- import kotlinx.coroutines.Dispatchers
- import kotlinx.coroutines.Job
- import kotlinx.coroutines.flow.MutableStateFlow
-@@ -138,6 +139,7 @@ class EmulationViewModel(
- 
-     private inner class CanvasSurfaceHolderCallback(val isMainCanvas: Boolean) :
-         SurfaceHolder.Callback {
-+        private var currentSurface: android.view.Surface? = null
- 
-         override fun surfaceCreated(surfaceHolder: SurfaceHolder) {}
- 
-@@ -150,10 +152,17 @@ class EmulationViewModel(
-             try {
-                 NativeEmulation.setSurfaceSize(width, height, isMainCanvas)
- 
-+                // Quest: a new SurfaceView can report in before the old one is destroyed.
-+                val isNewSurface = currentSurface !== surfaceHolder.surface
-+                if (setSurfaces.get(isMainCanvas) && isNewSurface) {
-+                    releaseSurface()
-+                }
-+
-                 if (setSurfaces.get(isMainCanvas)) {
-                     return
-                 }
- 
-+                currentSurface = surfaceHolder.surface
-                 NativeEmulation.setSurface(surfaceHolder.surface, isMainCanvas)
-                 val mainSurfaceWasDestroyed = destroyedSurfaces.get(isMain = true)
- 
-@@ -175,6 +184,14 @@ class EmulationViewModel(
-         }
- 
-         override fun surfaceDestroyed(surfaceHolder: SurfaceHolder) {
-+            if (currentSurface !== surfaceHolder.surface) {
-+                return
-+            }
-+
-+            releaseSurface()
-+        }
-+
-+        private fun releaseSurface() {
-             if (setSurfaces.get(isMain = false)) {
-                 NativeEmulation.clearPadSurface()
-                 setSurfaces.set(isMain = false, false)
-@@ -190,6 +207,13 @@ class EmulationViewModel(
-         }
-     }
- 
-+    fun useXrSurface(surface: android.view.Surface) {
-+        NativeEmulation.setSurfaceSize(NativeXr.SCREEN_WIDTH, NativeXr.SCREEN_HEIGHT, true)
-+        NativeEmulation.setSurface(surface, true)
-+        setSurfaces.set(isMain = true, true)
-+        initializeEmulation()
-+    }
-+
-     val mainHolderCallback: SurfaceHolder.Callback = CanvasSurfaceHolderCallback(true)
-     val padHolderCallback: SurfaceHolder.Callback = CanvasSurfaceHolderCallback(false)
- 
-@@ -221,6 +245,8 @@ class EmulationViewModel(
-         attemptWithContext(Dispatchers.IO) { NativeEmulation.launchTitle() }
-             .mapError { NativeError.LaunchingTitleError }
- 
-+    private val _isEmulationStarting = MutableStateFlow(false)
-+    val isEmulationStarting = _isEmulationStarting.asStateFlow()
-     private val _isEmulationInitialized = MutableStateFlow(false)
-     val isEmulationInitialized = _isEmulationInitialized.asStateFlow()
-     private var emulationInitializationJob: Job? = null
-@@ -229,6 +255,7 @@ class EmulationViewModel(
-             return
-         }
- 
-+        _isEmulationStarting.value = true
-         emulationInitializationJob = viewModelScope.launch {
-             prepareTitle()
-                 .bind { initializeSystems() }
-diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt
-index f11f3e8..235d22b 100644
---- a/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt
-+++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt
-@@ -6,6 +6,33 @@ import info.cemu.cemu.common.android.inputevent.isFromPhysicalController
- import info.cemu.cemu.nativeinterface.NativeInput
- 
- object InputHandler {
-+    /** Quest: the Touch controllers play the first GamePad without any mapping to set up. */
-+    private fun defaultButton(keyCode: Int) = when (keyCode) {
-+        KeyEvent.KEYCODE_BUTTON_A -> NativeInput.VPADButton.A
-+        KeyEvent.KEYCODE_BUTTON_B -> NativeInput.VPADButton.B
-+        KeyEvent.KEYCODE_BUTTON_X -> NativeInput.VPADButton.X
-+        KeyEvent.KEYCODE_BUTTON_Y -> NativeInput.VPADButton.Y
-+        KeyEvent.KEYCODE_BUTTON_L1 -> NativeInput.VPADButton.L
-+        KeyEvent.KEYCODE_BUTTON_R1 -> NativeInput.VPADButton.R
-+        KeyEvent.KEYCODE_BUTTON_L2 -> NativeInput.VPADButton.ZL
-+        KeyEvent.KEYCODE_BUTTON_R2 -> NativeInput.VPADButton.ZR
-+        KeyEvent.KEYCODE_BUTTON_THUMBL -> NativeInput.VPADButton.STICKL
-+        KeyEvent.KEYCODE_BUTTON_THUMBR -> NativeInput.VPADButton.STICKR
-+        KeyEvent.KEYCODE_BUTTON_START -> NativeInput.VPADButton.PLUS
-+        KeyEvent.KEYCODE_BUTTON_SELECT -> NativeInput.VPADButton.MINUS
-+        else -> -1
-+    }
-+
-+    private fun usesDefaultMapping() = !NativeInput.isControllerDisabled(0)
-+            && NativeInput.getControllerType(0) == NativeInput.EmulatedControllerType.VPAD
-+
-+    private fun setDefaultStick(up: Int, down: Int, left: Int, right: Int, x: Float, y: Float) {
-+        NativeInput.onOverlayAxis(0, up, (-y).coerceAtLeast(0f))
-+        NativeInput.onOverlayAxis(0, down, y.coerceAtLeast(0f))
-+        NativeInput.onOverlayAxis(0, left, (-x).coerceAtLeast(0f))
-+        NativeInput.onOverlayAxis(0, right, x.coerceAtLeast(0f))
-+    }
-+
-     fun onKeyEvent(event: KeyEvent): Boolean {
-         if (!event.isFromPhysicalController()) {
-             return false
-@@ -19,6 +46,11 @@ object InputHandler {
-             event.action == KeyEvent.ACTION_DOWN
-         )
- 
-+        val button = defaultButton(event.keyCode)
-+        if (button != -1 && usesDefaultMapping()) {
-+            NativeInput.onOverlayButton(0, button, event.action == KeyEvent.ACTION_DOWN)
-+        }
-+
-         return true
-     }
- 
-@@ -35,6 +67,21 @@ object InputHandler {
-             NativeInput.onControllerAxis(device.descriptor, axis, axisValue)
-         }
- 
-+        if (usesDefaultMapping()) {
-+            setDefaultStick(
-+                NativeInput.VPADButton.STICKL_UP, NativeInput.VPADButton.STICKL_DOWN,
-+                NativeInput.VPADButton.STICKL_LEFT, NativeInput.VPADButton.STICKL_RIGHT,
-+                event.getAxisValue(MotionEvent.AXIS_X), event.getAxisValue(MotionEvent.AXIS_Y),
-+            )
-+            setDefaultStick(
-+                NativeInput.VPADButton.STICKR_UP, NativeInput.VPADButton.STICKR_DOWN,
-+                NativeInput.VPADButton.STICKR_LEFT, NativeInput.VPADButton.STICKR_RIGHT,
-+                event.getAxisValue(MotionEvent.AXIS_Z), event.getAxisValue(MotionEvent.AXIS_RZ),
-+            )
-+            NativeInput.onOverlayButton(0, NativeInput.VPADButton.ZL, event.getAxisValue(MotionEvent.AXIS_LTRIGGER) > 0.5f)
-+            NativeInput.onOverlayButton(0, NativeInput.VPADButton.ZR, event.getAxisValue(MotionEvent.AXIS_RTRIGGER) > 0.5f)
-+        }
-+
-         return true
-     }
- }
-diff --git a/vcpkg.json b/vcpkg.json
-index aace925..9254bfe 100644
---- a/vcpkg.json
-+++ b/vcpkg.json
-@@ -48,7 +48,6 @@
-       "name": "fmt",
-       "version>=": "12.1.0"
-     },
--    "hidapi",
-     "libpng",
-     "glm",
-     {
 diff --git a/src/android/app/src/main/cpp/NativeXr.cpp b/src/android/app/src/main/cpp/NativeXr.cpp
 new file mode 100644
+index 0000000..107308c
 --- /dev/null
 +++ b/src/android/app/src/main/cpp/NativeXr.cpp
 @@ -0,0 +1,422 @@
@@ -872,8 +573,29 @@ new file mode 100644
 +	s_startDone.wait(lock, [] { return s_startFinished; });
 +	return s_surface;
 +}
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt b/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt
+index f695707..76d437d 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/MainActivity.kt
+@@ -25,6 +25,7 @@ import info.cemu.cemu.common.ui.components.ActivityContent
+ import info.cemu.cemu.common.ui.localization.TranslatableContent
+ import info.cemu.cemu.emulation.EmulationActivity
+ import info.cemu.cemu.games.GameListRoute
++import info.cemu.cemu.common.android.context.requestAllFilesAccess
+ import info.cemu.cemu.games.gamesNavigation
+ import info.cemu.cemu.graphicpacks.GraphicPacksRoute
+ import info.cemu.cemu.graphicpacks.graphicPacksNavigation
+@@ -58,6 +59,7 @@ class MainActivity : AppCompatActivity() {
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
++        requestAllFilesAccess()
+         setContent {
+             TranslatableContent {
+                 ActivityContent {
 diff --git a/src/android/app/src/main/java/info/cemu/cemu/common/android/context/AllFilesAccess.kt b/src/android/app/src/main/java/info/cemu/cemu/common/android/context/AllFilesAccess.kt
 new file mode 100644
+index 0000000..b1aa74d
 --- /dev/null
 +++ b/src/android/app/src/main/java/info/cemu/cemu/common/android/context/AllFilesAccess.kt
 @@ -0,0 +1,24 @@
@@ -901,8 +623,288 @@ new file mode 100644
 +    }
 +    return false
 +}
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt
+index 29a5c74..d88cf1d 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationActivity.kt
+@@ -14,6 +14,7 @@ import androidx.lifecycle.Lifecycle
+ import androidx.lifecycle.lifecycleScope
+ import androidx.lifecycle.repeatOnLifecycle
+ import info.cemu.cemu.BuildConfig
++import info.cemu.cemu.common.android.context.requestAllFilesAccess
+ import info.cemu.cemu.common.android.inputevent.isFromPhysicalController
+ import info.cemu.cemu.common.settings.AppSettingsStore
+ import info.cemu.cemu.common.ui.components.ActivityContent
+@@ -25,6 +26,8 @@ import info.cemu.cemu.emulation.input.DeviceMotionHandler
+ import info.cemu.cemu.emulation.input.HotkeyManager
+ import info.cemu.cemu.emulation.input.InputHandler
+ import info.cemu.cemu.emulation.input.NativeInputDeviceListener
++import info.cemu.cemu.nativeinterface.NativeInput
++import info.cemu.cemu.nativeinterface.NativeXr
+ import kotlinx.coroutines.flow.distinctUntilChanged
+ import kotlinx.coroutines.flow.map
+ import kotlinx.coroutines.launch
+@@ -115,6 +118,18 @@ class EmulationActivity : AppCompatActivity() {
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+ 
++        if (!requestAllFilesAccess()) {
++            finish()
++            return
++        }
++
++        // A fresh install has no controller at all: the game would wait forever and the overlay stays empty.
++        if (NativeInput.isControllerDisabled(0)) {
++            NativeInput.setControllerType(0, NativeInput.EmulatedControllerType.VPAD)
++        }
++
++        NativeXr.startSession(this)
++
+         inputManager = InputDelegateManager(this)
+ 
+         setupHotkeys()
+@@ -169,12 +184,20 @@ class EmulationActivity : AppCompatActivity() {
+         controller.hide(WindowInsetsCompat.Type.systemBars())
+     }
+ 
++    /** Called by the OpenXR thread: the left menu button was held, or the session ended. */
++    @androidx.annotation.Keep
++    fun onXrQuit() = runOnUiThread(::onQuit)
++
+     private fun onQuit() {
++        intent.getStringExtra(EXTRA_RETURN_PACKAGE)?.let { caller ->
++            packageManager.getLaunchIntentForPackage(caller)?.let(::startActivity)
++        }
+         finish()
+         exitProcess(0)
+     }
+ 
+     companion object {
+         const val EXTRA_LAUNCH_PATH: String = BuildConfig.APPLICATION_ID + ".LaunchPath"
++        const val EXTRA_RETURN_PACKAGE: String = BuildConfig.APPLICATION_ID + ".ReturnPackage"
+     }
+ }
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt
+index 2a58ee0..7042fd3 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationScreen.kt
+@@ -68,6 +68,7 @@ import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.D
+ import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.EDIT_POSITION
+ import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.EDIT_SIZE
+ import info.cemu.cemu.nativeinterface.NativeEmulation
++import info.cemu.cemu.nativeinterface.NativeXr
+ import kotlinx.coroutines.launch
+ 
+ @Composable
+@@ -90,6 +91,7 @@ fun EmulationScreen(
+ 
+     val emulationError by viewModel.emulationError.collectAsState()
+     val isEmulationInitialized by viewModel.isEmulationInitialized.collectAsState()
++    val isEmulationStarting by viewModel.isEmulationStarting.collectAsState()
+     val sideMenuState by viewModel.sideMenuState.collectAsState()
+     val gamePadPosition by viewModel.gamePadPosition.collectAsState()
+     val isInputOverlayVisible by viewModel.isInputOverlayVisible.collectAsState()
+@@ -126,6 +128,10 @@ fun EmulationScreen(
+         setInputListeningEnabled(drawerState.isClosed)
+     }
+ 
++    LaunchedEffect(Unit) {
++        NativeXr.surface?.let(viewModel::useXrSurface)
++    }
++
+     LaunchedEffect(Unit) {
+         HotkeyManager.actions.collect { action ->
+             when (action) {
+@@ -221,10 +227,19 @@ fun EmulationScreen(
+     }
+ 
+     emulationError?.let {
+-        EmulationErrorDialog(it, onQuit)
++        // A dialog is invisible during an OpenXR session: leave rather than show an empty screen.
++        if (NativeXr.surface != null) {
++            LaunchedEffect(it) {
++                android.util.Log.e("CemuXr", "emulation error: $it")
++                onQuit()
++            }
++        } else {
++            EmulationErrorDialog(it, onQuit)
++        }
+     }
+ 
+-    if (!isEmulationInitialized) {
++    // Quest: a dialog window over the SurfaceView seems to keep its surface from being created.
++    if (isEmulationStarting && !isEmulationInitialized) {
+         EmulationLoadingDialog()
+     }
+ 
+@@ -396,7 +411,7 @@ private fun EmulationSurfaces(
+     padHolderCallback: SurfaceHolder.Callback,
+     onInitializeEmulation: () -> Unit
+ ) {
+-    if (gamePadPosition == null) {
++    if (gamePadPosition == null || NativeXr.surface != null) {
+         return
+     }
+ 
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt
+index e5c96ff..dbbb682 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/EmulationViewModel.kt
+@@ -22,6 +22,7 @@ import info.cemu.cemu.common.settings.OverlayInputConfig
+ import info.cemu.cemu.nativeinterface.NativeEmulation
+ import info.cemu.cemu.nativeinterface.NativeEmulation.PrepareTitleResult
+ import info.cemu.cemu.nativeinterface.NativeException
++import info.cemu.cemu.nativeinterface.NativeXr
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.flow.MutableStateFlow
+@@ -138,6 +139,7 @@ class EmulationViewModel(
+ 
+     private inner class CanvasSurfaceHolderCallback(val isMainCanvas: Boolean) :
+         SurfaceHolder.Callback {
++        private var currentSurface: android.view.Surface? = null
+ 
+         override fun surfaceCreated(surfaceHolder: SurfaceHolder) {}
+ 
+@@ -150,10 +152,17 @@ class EmulationViewModel(
+             try {
+                 NativeEmulation.setSurfaceSize(width, height, isMainCanvas)
+ 
++                // Quest: a new SurfaceView can report in before the old one is destroyed.
++                val isNewSurface = currentSurface !== surfaceHolder.surface
++                if (setSurfaces.get(isMainCanvas) && isNewSurface) {
++                    releaseSurface()
++                }
++
+                 if (setSurfaces.get(isMainCanvas)) {
+                     return
+                 }
+ 
++                currentSurface = surfaceHolder.surface
+                 NativeEmulation.setSurface(surfaceHolder.surface, isMainCanvas)
+                 val mainSurfaceWasDestroyed = destroyedSurfaces.get(isMain = true)
+ 
+@@ -175,6 +184,14 @@ class EmulationViewModel(
+         }
+ 
+         override fun surfaceDestroyed(surfaceHolder: SurfaceHolder) {
++            if (currentSurface !== surfaceHolder.surface) {
++                return
++            }
++
++            releaseSurface()
++        }
++
++        private fun releaseSurface() {
+             if (setSurfaces.get(isMain = false)) {
+                 NativeEmulation.clearPadSurface()
+                 setSurfaces.set(isMain = false, false)
+@@ -190,6 +207,13 @@ class EmulationViewModel(
+         }
+     }
+ 
++    fun useXrSurface(surface: android.view.Surface) {
++        NativeEmulation.setSurfaceSize(NativeXr.SCREEN_WIDTH, NativeXr.SCREEN_HEIGHT, true)
++        NativeEmulation.setSurface(surface, true)
++        setSurfaces.set(isMain = true, true)
++        initializeEmulation()
++    }
++
+     val mainHolderCallback: SurfaceHolder.Callback = CanvasSurfaceHolderCallback(true)
+     val padHolderCallback: SurfaceHolder.Callback = CanvasSurfaceHolderCallback(false)
+ 
+@@ -221,6 +245,8 @@ class EmulationViewModel(
+         attemptWithContext(Dispatchers.IO) { NativeEmulation.launchTitle() }
+             .mapError { NativeError.LaunchingTitleError }
+ 
++    private val _isEmulationStarting = MutableStateFlow(false)
++    val isEmulationStarting = _isEmulationStarting.asStateFlow()
+     private val _isEmulationInitialized = MutableStateFlow(false)
+     val isEmulationInitialized = _isEmulationInitialized.asStateFlow()
+     private var emulationInitializationJob: Job? = null
+@@ -229,6 +255,7 @@ class EmulationViewModel(
+             return
+         }
+ 
++        _isEmulationStarting.value = true
+         emulationInitializationJob = viewModelScope.launch {
+             prepareTitle()
+                 .bind { initializeSystems() }
+diff --git a/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt b/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt
+index f11f3e8..235d22b 100644
+--- a/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt
++++ b/src/android/app/src/main/java/info/cemu/cemu/emulation/input/InputHandler.kt
+@@ -6,6 +6,33 @@ import info.cemu.cemu.common.android.inputevent.isFromPhysicalController
+ import info.cemu.cemu.nativeinterface.NativeInput
+ 
+ object InputHandler {
++    /** Quest: the Touch controllers play the first GamePad without any mapping to set up. */
++    private fun defaultButton(keyCode: Int) = when (keyCode) {
++        KeyEvent.KEYCODE_BUTTON_A -> NativeInput.VPADButton.A
++        KeyEvent.KEYCODE_BUTTON_B -> NativeInput.VPADButton.B
++        KeyEvent.KEYCODE_BUTTON_X -> NativeInput.VPADButton.X
++        KeyEvent.KEYCODE_BUTTON_Y -> NativeInput.VPADButton.Y
++        KeyEvent.KEYCODE_BUTTON_L1 -> NativeInput.VPADButton.L
++        KeyEvent.KEYCODE_BUTTON_R1 -> NativeInput.VPADButton.R
++        KeyEvent.KEYCODE_BUTTON_L2 -> NativeInput.VPADButton.ZL
++        KeyEvent.KEYCODE_BUTTON_R2 -> NativeInput.VPADButton.ZR
++        KeyEvent.KEYCODE_BUTTON_THUMBL -> NativeInput.VPADButton.STICKL
++        KeyEvent.KEYCODE_BUTTON_THUMBR -> NativeInput.VPADButton.STICKR
++        KeyEvent.KEYCODE_BUTTON_START -> NativeInput.VPADButton.PLUS
++        KeyEvent.KEYCODE_BUTTON_SELECT -> NativeInput.VPADButton.MINUS
++        else -> -1
++    }
++
++    private fun usesDefaultMapping() = !NativeInput.isControllerDisabled(0)
++            && NativeInput.getControllerType(0) == NativeInput.EmulatedControllerType.VPAD
++
++    private fun setDefaultStick(up: Int, down: Int, left: Int, right: Int, x: Float, y: Float) {
++        NativeInput.onOverlayAxis(0, up, (-y).coerceAtLeast(0f))
++        NativeInput.onOverlayAxis(0, down, y.coerceAtLeast(0f))
++        NativeInput.onOverlayAxis(0, left, (-x).coerceAtLeast(0f))
++        NativeInput.onOverlayAxis(0, right, x.coerceAtLeast(0f))
++    }
++
+     fun onKeyEvent(event: KeyEvent): Boolean {
+         if (!event.isFromPhysicalController()) {
+             return false
+@@ -19,6 +46,11 @@ object InputHandler {
+             event.action == KeyEvent.ACTION_DOWN
+         )
+ 
++        val button = defaultButton(event.keyCode)
++        if (button != -1 && usesDefaultMapping()) {
++            NativeInput.onOverlayButton(0, button, event.action == KeyEvent.ACTION_DOWN)
++        }
++
+         return true
+     }
+ 
+@@ -35,6 +67,21 @@ object InputHandler {
+             NativeInput.onControllerAxis(device.descriptor, axis, axisValue)
+         }
+ 
++        if (usesDefaultMapping()) {
++            setDefaultStick(
++                NativeInput.VPADButton.STICKL_UP, NativeInput.VPADButton.STICKL_DOWN,
++                NativeInput.VPADButton.STICKL_LEFT, NativeInput.VPADButton.STICKL_RIGHT,
++                event.getAxisValue(MotionEvent.AXIS_X), event.getAxisValue(MotionEvent.AXIS_Y),
++            )
++            setDefaultStick(
++                NativeInput.VPADButton.STICKR_UP, NativeInput.VPADButton.STICKR_DOWN,
++                NativeInput.VPADButton.STICKR_LEFT, NativeInput.VPADButton.STICKR_RIGHT,
++                event.getAxisValue(MotionEvent.AXIS_Z), event.getAxisValue(MotionEvent.AXIS_RZ),
++            )
++            NativeInput.onOverlayButton(0, NativeInput.VPADButton.ZL, event.getAxisValue(MotionEvent.AXIS_LTRIGGER) > 0.5f)
++            NativeInput.onOverlayButton(0, NativeInput.VPADButton.ZR, event.getAxisValue(MotionEvent.AXIS_RTRIGGER) > 0.5f)
++        }
++
+         return true
+     }
+ }
 diff --git a/src/android/app/src/main/java/info/cemu/cemu/nativeinterface/NativeXr.kt b/src/android/app/src/main/java/info/cemu/cemu/nativeinterface/NativeXr.kt
 new file mode 100644
+index 0000000..eecc2d0
 --- /dev/null
 +++ b/src/android/app/src/main/java/info/cemu/cemu/nativeinterface/NativeXr.kt
 @@ -0,0 +1,20 @@
@@ -926,3 +928,15 @@ new file mode 100644
 +    @JvmStatic
 +    private external fun start(activity: Activity): Surface?
 +}
+diff --git a/vcpkg.json b/vcpkg.json
+index aace925..9254bfe 100644
+--- a/vcpkg.json
++++ b/vcpkg.json
+@@ -48,7 +48,6 @@
+       "name": "fmt",
+       "version>=": "12.1.0"
+     },
+-    "hidapi",
+     "libpng",
+     "glm",
+     {
