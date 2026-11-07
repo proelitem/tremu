@@ -60,6 +60,9 @@ copie de partie reste exacte, `host` et `guest` font jouer deux processus ensemb
 python build.py --install
 ```
 
+Version publique (clé de publication, non débogable) : `python build.py --release`, voir
+[docs/release.md](docs/release.md).
+
 `build.py` attend, à côté de ce dossier, les outils `../time-crisis-vr/.tools` (NDK, OpenXR, outils Android) et `../_tools` (CMake, JDK), et les cœurs compilés dans `third_party/`. Ces cœurs ne sont pas dans le dépôt : ils viennent du buildbot libretro ou de nos versions, construites par `tools/build_*`. Voir [THIRD_PARTY.md](THIRD_PARTY.md).
 
 Le plan de travail est dans [ROADMAP.md](ROADMAP.md).
