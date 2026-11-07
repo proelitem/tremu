@@ -1,22 +1,13 @@
 # Tremu — planification
 
-## À venir : Xbox et Wii U (applis Android séparées)
+## Xbox et Wii U : fonctionnent (vérifié dans le casque le 07/11/2026)
 
-Ce ne sont pas des cœurs libretro : Tremu ne peut pas les charger en interne comme les autres
-consoles. La piste est la même que pour Time Crisis VR et l'appli WonderFitter : une tuile dans le
-carrousel qui lance l'appli installée à côté, avec le jeu choisi.
+| Console | Comment | État |
+|---|---|---|
+| Xbox (originale) | xemu (via [X1 BOX](https://github.com/WinDroidEmulation/x1-box), GPL v2) devenu un cœur libretro dans Tremu : rien à installer à côté | Fonctionne comme il se doit. Le joueur fournit MCPX Boot ROM, BIOS (Flash ROM) et image de disque dur dans `Tremu/Xbox/system`. |
+| Wii U | Appli séparée : notre Cemu Android ([proelitem/Cemu](https://github.com/proelitem/Cemu), branche `tremu`, d'après SSimco/Cemu, MPL 2.0), écran OpenXR, manettes Touch | Lancement depuis Tremu et jeu : fonctionnent. Notre Cemu revient aussi au carrousel quand on maintient le bouton menu 1,5 s (pas encore confirmé dans le casque). Le joueur fournit ses clés et ses jeux (`Download/Roms/wiiu`). |
 
-| Console | Projet | État constaté (29/10/2026) | À vérifier avant de s'engager |
-|---|---|---|---|
-| Xbox (originale) | [X1 BOX](https://github.com/WinDroidEmulation/x1-box), fork de xemu, GPL v2 | Appli Android sur Google Play et, au 30/10/2026, APK dans les releases (1.2.5, 20 Mo). Android 8+, arm64, **Vulkan obligatoire**, 8 Go de RAM conseillés. Manette Bluetooth/USB ou tactile. Il faut fournir MCPX Boot ROM, BIOS (Flash ROM), image de disque dur et jeux. Lu dans le code : `MainActivity` hérite de `SDLActivity` (SDL2 + QEMU dans le processus), lancement d'un jeu par intent déjà prévu (`VIEW`, extras `rom`/`path`/`uri`, `FrontendLaunchHelper.kt`), pilotes Turnip personnalisés déjà gérés (`GpuDriverHelper.kt`). Fork : NDK 29, CMake 3.30.3, Meson, JDK 21, Rust. | Tourne-t-elle sur Quest 3 et à quelle vitesse ? Les Touch sont-elles vues comme manette (sinon, à injecter dans notre fork) ? |
-| Wii U | [Cemu Android (SSimco)](https://github.com/SSimco/Cemu), MPL 2.0 | Portage « précoce et expérimental », pas de release ni d'APK publiés, pas de doc sur l'entrée ni le lancement. | Compiler l'APK nous-mêmes, tester Vulkan sur Quest 3, voir si un lancement avec jeu (intent) existe ou s'ajoute, et comment brancher la visée (Wiimote/GamePad). |
-
-Ces systèmes sont récents : il faudra les adapter (lancement par intent, armes, VR), avec d'éventuels
-mods VR par jeu (voir plus bas).
-
-Contraintes : on ne modifie pas ces applis si elles sont commerciales ; ici elles sont libres (GPL,
-MPL), donc un fork avec un lancement par intent et l'entrée de nos armes reste possible. Les
-fichiers système (BIOS Xbox, clés Wii U) restent fournis par le joueur.
+Les fichiers système (BIOS Xbox, clés Wii U) restent fournis par le joueur.
 
 ## PS3 : tuile vers ARMSX3 (essayé dans le casque avec Razing Storm)
 
@@ -88,5 +79,5 @@ Le joueur dépose ses fichiers (page web de Tremu ou `Download/Roms/<console>`, 
 - **Classement automatique** d'après le contenu du fichier, pas d'après son nom. Wii U : `meta/meta.xml` donne le titre, et le début de l'identifiant donne le type (`00050000` jeu, `0005000E` mise à jour, `0005000C` DLC). Un `.wua` peut regrouper les trois.
 - **Vérifications** avant d'installer : même région que le jeu, espace libre, fichiers complets ; message clair sinon.
 - **Mécanisme commun** : chaque système déclare comment reconnaître ses contenus (Wii U d'abord, puis Xbox 360 et PS3, qui ont aussi mises à jour et DLC).
-- **Wii U** : notre Cemu doit lire les jeux hors de son dossier privé (droit d'accès au stockage, lecture de `Download/Roms/wiiu`). À tester.
+- **Wii U** : notre Cemu lit déjà les jeux de `Download/Roms/wiiu` (accès à tous les fichiers) ; reste à reconnaître les mises à jour et DLC qui s'y trouvent.
 - Tremu ne fournit ni jeux, ni clés, ni liens de téléchargement.
