@@ -65,10 +65,16 @@ Sur https://sidequestvr.com, avec ton compte développeur :
 | Paquet | `com.tremu.app` |
 | Icône | `branding/tremu-icon.png` (512 × 512) |
 | Logo, image de fond | `branding/tremu-logo.png`, `branding/tremu-carousel-bg.jpg` (aux dimensions demandées par SideQuest) |
-| Captures | Dans le casque : bouton Meta › Appareil photo › Prendre une photo, pendant le carrousel et quelques parties ; elles sont dans `Oculus/Screenshots` |
+| Captures | `docs/store/screenshots/` (1920 × 1080, français et anglais), faites en mode vitrine (ci-dessous) |
 | Code source | https://github.com/proelitem/tremu |
 | Appareils | Quest 3 et 3S |
 | APK | `build/tremu-<version>.apk` |
+
+**Mode vitrine (nouvelles captures).** Sur une version de développement, casque branché :
+`adb shell run-as com.tremu.app touch files/showcase`, puis relancer Tremu. Le carrousel montre des
+cartes neutres au nom des consoles (pas les jaquettes des éditeurs), l'adresse locale disparaît, et
+le carrousel, le chargement et le menu sont enregistrés à plat dans `Tremu/captures` toutes les
+4 secondes. On l'arrête avec `adb shell run-as com.tremu.app rm files/showcase`.
 
 Relis les conditions développeur de SideQuest avant l'envoi (émulateurs, contenus tiers). Ne
 publie ni jeu, ni BIOS, ni capture qui montre un logo de console comme si Tremu était officiel.
