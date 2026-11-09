@@ -138,9 +138,16 @@ def manifest(release):
 
 
 def release_key():
-    key = os.environ.get('TREMU_KEYSTORE')
-    if not key or not Path(key).is_file() or not os.environ.get('TREMU_KEYSTORE_PASS'):
-        sys.exit('Release: set TREMU_KEYSTORE (the release keystore) and TREMU_KEYSTORE_PASS (see docs/release.md)')
+    key = os.environ.get('TREMU_KEYSTORE', '').strip().strip('"\'')
+    problems = []
+    if not key:
+        problems.append('TREMU_KEYSTORE is not set in this window')
+    elif not Path(key).is_file():
+        problems.append(f'TREMU_KEYSTORE points to "{key}", which is not a file')
+    if not os.environ.get('TREMU_KEYSTORE_PASS'):
+        problems.append('TREMU_KEYSTORE_PASS is empty or not set in this window')
+    if problems:
+        sys.exit('Release: ' + '; '.join(problems) + ' (see docs/release.md)')
     return key, os.environ.get('TREMU_KEY_ALIAS', 'tremu')
 
 
