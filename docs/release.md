@@ -28,13 +28,16 @@ La même clé signe les applications compagnes (ARMSX3, Cemu, Vita3K) quand elle
 2. Vérifie le jeu en réseau sur le banc d'essai (`_tools/nettest.ps1`, voir le README) et joue
    quelques jeux dans le casque.
 3. Mets à jour les correctifs des émulateurs : `python tools/make_patches.py`, puis commite tout.
-4. Compile, avec la clé dans l'environnement de cette fenêtre PowerShell seulement :
+4. Compile, avec le chemin de la clé dans l'environnement de cette fenêtre PowerShell :
 
    ```
    $env:TREMU_KEYSTORE = 'G:\Cles\tremu-release.jks'
-   $env:TREMU_KEYSTORE_PASS = [Net.NetworkCredential]::new('', (Read-Host 'Mot de passe de la clé' -AsSecureString)).Password
    python build.py --release
    ```
+
+   À la fin, `apksigner` demande le mot de passe de la clé dans la fenêtre (rien ne s'affiche
+   pendant la saisie). C'est la même lecture que `keytool` à la création de la clé, donc un mot de
+   passe avec des accents passe aussi. Si l'alias n'est pas `tremu`, définir `TREMU_KEY_ALIAS`.
 
    Résultat : `build/tremu-<version>.apk`, non débogable. Le script refuse s'il reste des
    changements non commités, pour que le code publié soit exactement celui de l'APK ; il affiche le

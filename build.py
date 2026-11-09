@@ -5,8 +5,8 @@ Usage: python build.py [--install] [--sync] [--rom game.zip [--rom cchip.zip ...
        python build.py --release          (public build, see docs/release.md)
   --sync     copies this folder's Roms/, Banner/ and bios/ to Tremu/ on the Quest
   --release  not debuggable, signed with the release key: TREMU_KEYSTORE (path), TREMU_KEY_ALIAS
-             (default "tremu") and TREMU_KEYSTORE_PASS (read by apksigner from the environment, never
-             written anywhere); refuses uncommitted changes, so the APK matches a published commit.
+             (default "tremu"); apksigner asks for the password, or reads TREMU_KEYSTORE_PASS if set
+             (never written anywhere); refuses uncommitted changes, so the APK matches a published commit.
 The version is in the VERSION file (major.minor.patch); versionCode = major*10000 + minor*100 + patch.
 """
 import argparse, os, shutil, subprocess, sys, zipfile
@@ -144,8 +144,6 @@ def release_key():
         problems.append('TREMU_KEYSTORE is not set in this window')
     elif not Path(key).is_file():
         problems.append(f'TREMU_KEYSTORE points to "{key}", which is not a file')
-    if not os.environ.get('TREMU_KEYSTORE_PASS'):
-        problems.append('TREMU_KEYSTORE_PASS is empty or not set in this window')
     if problems:
         sys.exit('Release: ' + '; '.join(problems) + ' (see docs/release.md)')
     return key, os.environ.get('TREMU_KEY_ALIAS', 'tremu')
@@ -161,9 +159,14 @@ def sign(aligned, signed, release):
             '--out', signed, aligned)
         return
     key, alias = release_key()
-    # env: makes apksigner read the password itself; it never appears on a command line or in a log.
+    # The password never appears on a command line or in a log: apksigner reads it from
+    # TREMU_KEYSTORE_PASS when set, otherwise it asks for it in this window, the way keytool did when
+    # the key was made (the same console reading, so a password with accents matches).
+    password = ['--ks-pass', 'env:TREMU_KEYSTORE_PASS'] if os.environ.get('TREMU_KEYSTORE_PASS') else []
+    if not password:
+        print('apksigner will ask for the release key password:', flush=True)
     run(JDK / 'bin/java.exe', '-jar', BT / 'lib/apksigner.jar', 'sign', '--ks', key, '--ks-key-alias', alias,
-        '--ks-pass', 'env:TREMU_KEYSTORE_PASS', '--out', signed, aligned)
+        *password, '--out', signed, aligned)
     run(JDK / 'bin/java.exe', '-jar', BT / 'lib/apksigner.jar', 'verify', '--print-certs', signed)
 
 
