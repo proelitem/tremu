@@ -68,6 +68,7 @@ final class Carousel {
      * (angle in degrees) and a status line. Returns ARGB pixels, top row first.
      */
     static int[] renderLoading(String title, String banner, String status, float angle, int width, int height) {
+        if (Showcase.on()) { title = "Dreamcast"; banner = null; }
         if (canvasBitmap == null || canvasBitmap.getWidth() != width || canvasBitmap.getHeight() != height)
             canvasBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(canvasBitmap);
@@ -108,6 +109,7 @@ final class Carousel {
         TremuActivity.fitText(p, status, right - textLeft);
         c.drawText(status, textLeft, wy + 12, p);
 
+        Showcase.save("loading", canvasBitmap);
         int[] pixels = new int[width * height];
         canvasBitmap.getPixels(pixels, 0, width, 0, 0, width, height);
         return pixels;
@@ -254,6 +256,14 @@ final class Carousel {
      */
     static int[] render(String[] titles, String[] banners, float position, int selected, String console, String footer,
                         int tab, int barItem, String search, int width, int height) {
+        if (Showcase.on()) {
+            titles = Showcase.TITLES;
+            banners = new String[titles.length];
+            selected = Math.max(0, Math.min(titles.length - 1, Math.round(position)));
+            position = selected;
+            console = "";
+            footer = Showcase.footer(footer);
+        }
         if (canvasBitmap == null || canvasBitmap.getWidth() != width || canvasBitmap.getHeight() != height)
             canvasBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(canvasBitmap);
@@ -274,7 +284,8 @@ final class Carousel {
         // Far cards first so the centre one is drawn on top.
         Integer[] order = new Integer[titles.length];
         for (int i = 0; i < order.length; i++) order[i] = i;
-        java.util.Arrays.sort(order, (a, b) -> Float.compare(Math.abs(b - position), Math.abs(a - position)));
+        final float at = position;
+        java.util.Arrays.sort(order, (a, b) -> Float.compare(Math.abs(b - at), Math.abs(a - at)));
         for (int i : order) {
             float offset = i - position;
             if (Math.abs(offset) >= 3) continue;
@@ -336,6 +347,7 @@ final class Carousel {
         c.drawText(footer, cx, noGames ? 340 : 676, p);
         p.setTextAlign(Paint.Align.LEFT);
 
+        Showcase.save("carousel", canvasBitmap);
         int[] pixels = new int[width * height];
         canvasBitmap.getPixels(pixels, 0, width, 0, 0, width, height);
         return pixels;

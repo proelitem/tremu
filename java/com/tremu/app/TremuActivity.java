@@ -107,6 +107,12 @@ public final class TremuActivity extends NativeActivity {
         }
     }
 
+    /** The app's private files folder, null before the activity exists. */
+    static java.io.File filesDir() {
+        TremuActivity a = instance;
+        return a == null ? null : a.getFilesDir();
+    }
+
     /** Native code can only reach this class (its loader), so carousel drawing is exposed here. */
     public static int[] renderCarousel(String[] titles, String[] banners, float position, int selected, String console, String footer,
                                        int tab, int barItem, String search, int width, int height) {
@@ -375,9 +381,11 @@ public final class TremuActivity extends NativeActivity {
         }
         paint.setTextSize(24);
         paint.setColor(0xFF9A9DA5);
-        fitText(paint, lines[lines.length - 1], width - 72);
-        canvas.drawText(lines[lines.length - 1], 36, height - 26, paint);
+        String footer = Showcase.on() ? Showcase.footer(lines[lines.length - 1]) : lines[lines.length - 1];
+        fitText(paint, footer, width - 72);
+        canvas.drawText(footer, 36, height - 26, paint);
 
+        Showcase.save("menu", bitmap);
         int[] pixels = new int[width * height];
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
         bitmap.recycle();
