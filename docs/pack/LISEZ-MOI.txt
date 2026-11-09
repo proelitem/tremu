@@ -1,0 +1,110 @@
+TREMU — PACK POUR AMIS (version {VERSION})
+==========================================
+
+Tremu transforme un Meta Quest 3 ou 3S en borne de tir : tes jeux s'affichent sur un grand
+écran virtuel, et tu vises avec le pistolet WonderFitter ou les manettes Touch.
+
+Aucun jeu, BIOS, firmware ni clé n'est fourni : tu utilises tes propres copies.
+
+Guide complet : https://github.com/proelitem/tremu/blob/main/docs/install/fr.md
+
+
+CONTENU DU PACK
+---------------
+
+  1-Tremu\tremu-{VERSION}.apk       L'application. C'est la seule obligatoire.
+  2-Compagnes\ps3-armsx3.apk        Pour les jeux PS3.
+  2-Compagnes\wiiu-cemu.apk         Pour les jeux Wii U.
+  2-Compagnes\psvita-vita3k.apk     Pour les jeux PS Vita (expérimental : lent).
+  SHA256SUMS.txt                    Pour vérifier que les fichiers sont intacts.
+
+Tremu fait tourner lui-même l'arcade, la NES, la Super Nintendo, la N64, la Mega Drive, la
+Saturn, la PS1, la PS2, la PSP, la Dreamcast, la GameCube, la Wii, la Xbox et la Xbox 360.
+Les applications compagnes ne servent qu'aux trois consoles ci-dessus : installe seulement
+celles dont tu as besoin.
+
+
+1. PRÉPARER LE CASQUE (une seule fois)
+--------------------------------------
+
+1. Active le mode développeur : dans l'application mobile Meta Horizon, ouvre ton casque,
+   puis « Paramètres du casque » › « Mode développeur ». Meta demande de créer une
+   organisation développeur, c'est gratuit.
+2. Installe SideQuest sur ton PC (https://sidequestvr.com, « Advanced Installer »).
+3. Branche le casque en USB. Dans le casque, accepte « Autoriser le débogage USB »
+   (coche « Toujours autoriser depuis cet ordinateur »).
+
+
+2. INSTALLER TREMU
+------------------
+
+Glisse 1-Tremu\tremu-{VERSION}.apk sur la fenêtre de SideQuest et attends la fin de
+l'installation.
+
+Si Tremu est déjà publié sur SideQuest, tu peux aussi l'installer depuis sa fiche : c'est
+exactement le même fichier, et les mises à jour arriveront par SideQuest.
+
+Si une ancienne version de Tremu est déjà sur le casque et que SideQuest refuse
+l'installation, désinstalle-la d'abord (les jeux et les BIOS restent sur le casque).
+
+
+3. INSTALLER LES APPLICATIONS COMPAGNES (facultatif)
+----------------------------------------------------
+
+IMPORTANT : si une version officielle d'ARMSX3, de Cemu ou de Vita3K est déjà installée,
+désinstalle-la d'abord. Il faut les versions du pack : les versions officielles ne reçoivent
+pas le jeu choisi dans Tremu et ne reviennent pas au carrousel.
+
+Glisse ensuite les APK voulus de 2-Compagnes sur SideQuest. Tremu les ouvre lui-même :
+inutile de les lancer à la main. Le firmware PS3, le firmware PS Vita et les clés Wii U
+sont à toi de fournir.
+
+
+4. PREMIER LANCEMENT
+--------------------
+
+Dans le casque : Bibliothèque › Sources inconnues › Tremu. Tremu demande deux permissions,
+accepte les deux :
+  - Accès à tous les fichiers : pour lire tes jeux dans Download/Roms.
+  - Appareils à proximité (Bluetooth) : pour le pistolet WonderFitter.
+
+
+5. AJOUTER TES JEUX
+-------------------
+
+Le plus simple, sans câble : en bas du carrousel, Tremu affiche « Ajouter des jeux : http://… »
+et un code. Ouvre cette adresse dans le navigateur d'un PC ou d'un téléphone branché sur le
+même Wi-Fi, et dépose tes fichiers : Tremu les range tout seul.
+
+Sinon, avec le câble : copie les jeux dans Download/Roms/<console> sur le casque
+(par ex. Download/Roms/ps1, Download/Roms/mame/<jeu>). Les BIOS vont dans Tremu/bios.
+Quand un fichier manque, Tremu dit lequel et où le mettre.
+
+
+6. PISTOLET ET MENU
+-------------------
+
+- Allume le pistolet WonderFitter : Tremu le trouve tout seul. Ferme l'application
+  WonderFitter officielle si elle est ouverte (le pistolet n'accepte qu'une application à
+  la fois). Sans pistolet, les manettes Touch visent.
+- Bouton menu de la manette gauche : options du jeu (réglage du pistolet, écran, etc.).
+- Maintenu 1,5 seconde dans un jeu PS3, Wii U ou Vita : retour au carrousel.
+
+
+7. JOUER ENSEMBLE
+-----------------
+
+Les deux casques doivent avoir LA MÊME VERSION de Tremu et LE MÊME FICHIER de jeu.
+
+- Même Wi-Fi : un casque lance le jeu, puis menu › Multijoueur › « Héberger (Wi-Fi) ».
+  L'autre voit une tuile « Rejoindre : … » dans le carrousel.
+- Par Internet : « Héberger sur Internet » affiche un code à donner à l'autre (menu ›
+  « Rejoindre par code »). Si le code ne vient pas, ouvre le port UDP 47617 sur ta box
+  ou active l'UPnP.
+
+
+UN PROBLÈME ?
+-------------
+
+Dis-moi ce que tu faisais et ce que tu as vu. Pour le jeu en réseau, joins le fichier
+Tremu/netplay.log du casque (visible dans SideQuest, onglet des fichiers).
